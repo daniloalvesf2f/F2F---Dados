@@ -1276,9 +1276,14 @@ function f2f_ajax_import_by_clients()
         $page_size = 500;
 
         while (true) {
+            // Calcular data de 2 meses atrás
+            $two_months_ago = new DateTime();
+            $two_months_ago->modify('-2 months');
+            
             $body = array(
                 'ClientID' => $client_id,
                 'IncludeClosed' => true,
+                'StartDate' => $two_months_ago->format('Y-m-d\T00:00:00\Z'),
                 'Pagination' => array(
                     'PageNumber' => $page_number,
                     'PageSize' => $page_size,
