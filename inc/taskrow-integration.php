@@ -1115,15 +1115,20 @@ function f2f_ajax_import_single_project()
             }
         }
 
+        // Se retornou menos que page_size, acabou (verificar ANTES de liberar memória)
+        $should_break = false;
+        if (isset($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
+            $should_break = true;
+        }
+        if (!isset($tasks_data['data']) && (count($tasks_data) < $page_size)) {
+            $should_break = true;
+        }
+
         // Liberar memória
         unset($page_tasks);
         unset($tasks_data);
 
-        // Se retornou menos que page_size, acabou
-        if (isset($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
-            break;
-        }
-        if (!isset($tasks_data['data']) && (count($tasks_data) < $page_size)) {
+        if ($should_break) {
             break;
         }
 
