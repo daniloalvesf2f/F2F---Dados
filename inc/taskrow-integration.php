@@ -1143,3 +1143,225 @@ function f2f_ajax_import_single_project()
     ));
 }
 add_action('wp_ajax_f2f_import_single_project', 'f2f_ajax_import_single_project');
+
+/**
+ * AJAX: Listar todos os clientes da API Taskrow
+ * Endpoint: f2f_list_clients
+ * Retorna: Lista de clientes com ClientID, ClientNickname e ClientName
+ */
+function f2f_ajax_list_clients()
+{
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Sem permissão');
+    }
+
+    $host_name = get_option('f2f_taskrow_host_name', '');
+    $api_token = get_option('f2f_taskrow_api_token', '');
+
+    if (empty($host_name) || empty($api_token)) {
+        wp_send_json_error('API Taskrow não configurada');
+    }
+
+    // Endpoint para buscar clientes
+    $url = 'https://' . $host_name . '/api/v1/Search/SearchClients?q=&showInactives=false';
+
+    $response = wp_remote_request($url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 30,
+    ));
+
+    if (is_wp_error($response)) {
+        wp_send_json_error('Erro ao buscar clientes: ' . $response->get_error_message());
+    }
+
+    $response_code = wp_remote_retrieve_response_code($response);
+    if ($response_code !== 200) {
+        wp_send_json_error('Erro HTTP ' . $response_code . ' ao buscar clientes');
+    }
+
+    $body = wp_remote_retrieve_body($response);
+    $data = json_decode($body, true);
+
+    if (!is_array($data)) {
+        wp_send_json_error('Resposta inválida da API');
+    }
+
+    // Formatar resposta
+    $clients = array();
+    foreach ($data as $client) {
+        $clients[] = array(
+            'ClientID' => $client['clientID'] ?? $client['ClientID'] ?? null,
+            'ClientNickname' => $client['clientNickname'] ?? $client['ClientNickname'] ?? '',
+            'ClientName' => $client['clientName'] ?? $client['ClientName'] ?? '',
+        );
+    }
+
+    wp_send_json_success(array(
+        'clients' => $clients,
+        'total' => count($clients),
+    ));
+}
+add_action('wp_ajax_f2f_list_clients', 'f2f_ajax_list_clients');
+
+/**
+ * AJAX: Importar tarefas por ClientID (Nova estratégia)
+ * Endpoint: f2f_import_by_clients
+ * Busca tarefas de todos os clientes ao invés de iterar por projetos
+ */
+function f2f_ajax_import_by_clients()
+{
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Sem permissão');
+    }
+
+    $host_name = get_option('f2f_taskrow_host_name', '');
+    $api_token = get_option('f2f_taskrow_api_token', '');
+
+    if (empty($host_name) || empty($api_token)) {
+        wp_send_json_error('API Taskrow não configurada');
+    }
+
+    // 1. Buscar lista de clientes
+    $clients_url = 'https://' . $host_name . '/api/v1/Search/SearchClients?q=&showInactives=false';
+    
+    $clients_response = wp_remote_request($clients_url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 30,
+    ));
+
+    if (is_wp_error($clients_response)) {
+        wp_send_json_error('Erro ao buscar clientes: ' . $clients_response->get_error_message());
+    }
+
+    $clients_data = json_decode(wp_remote_retrieve_body($clients_response), true);
+    
+    if (!is_array($clients_data) || empty($clients_data)) {
+        wp_send_json_error('Nenhum cliente encontrado');
+    }
+
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
+    
+    $total_imported = 0;
+    $total_updated = 0;
+    $clients_processed = 0;
+
+    // 2. Para cada cliente, buscar tarefas
+    $tasks_url = 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch';
+
+    foreach ($clients_data as $client) {
+        $client_id = $client['clientID'] ?? $client['ClientID'] ?? null;
+        $client_nickname = $client['clientNickname'] ?? $client['ClientNickname'] ?? '';
+        $client_name = $client['clientName'] ?? $client['ClientName'] ?? '';
+
+        if (!$client_id) {
+            continue;
+        }
+
+        error_log("F2F: Processando cliente #{$client_id}: {$client_name}");
+
+        $page_number = 1;
+        $page_size = 500;
+
+        while (true) {
+            $body = array(
+                'ClientID' => $client_id,
+                'IncludeClosed' => true,
+                'Pagination' => array(
+                    'PageNumber' => $page_number,
+                    'PageSize' => $page_size,
+                )
+            );
+
+            $tasks_response = wp_remote_request($tasks_url, array(
+                'method' => 'POST',
+                'headers' => array(
+                    '__identifier' => $api_token,
+                    'Content-Type' => 'application/json',
+                ),
+                'body' => json_encode($body),
+                'timeout' => 60,
+            ));
+
+            if (is_wp_error($tasks_response)) {
+                error_log('F2F: Erro na página ' . $page_number . ' do cliente ' . $client_id . ': ' . $tasks_response->get_error_message());
+                break;
+            }
+
+            $tasks_data = json_decode(wp_remote_retrieve_body($tasks_response), true);
+            $page_tasks = $tasks_data['data'] ?? $tasks_data;
+
+            if (empty($page_tasks) || !is_array($page_tasks)) {
+                break;
+            }
+
+            foreach ($page_tasks as $task) {
+                $task_id = $task['taskID'] ?? $task['TaskID'] ?? null;
+
+                if (!$task_id) {
+                    continue;
+                }
+
+                $existing = $wpdb->get_var($wpdb->prepare(
+                    "SELECT id FROM {$table_name} WHERE taskrow_id = %s",
+                    $task_id
+                ));
+
+                $data = array(
+                    'taskrow_id' => $task_id,
+                    'job_number' => $task['jobNumber'] ?? 0,
+                    'task_number' => $task['taskNumber'] ?? 0,
+                    'client_nickname' => $client_nickname,
+                    'title' => $task['taskTitle'] ?? $task['title'] ?? 'Sem título',
+                    'description' => $task['taskDescription'] ?? $task['description'] ?? '',
+                    'client_name' => $client_name,
+                    'status' => $task['pipelineStep'] ?? null,
+                    'priority' => $task['priority'] ?? $task['Priority'] ?? null,
+                    'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
+                    'attachments' => json_encode($task['attachments'] ?? array()),
+                );
+
+                if ($existing) {
+                    $wpdb->update($table_name, $data, array('id' => $existing));
+                    $total_updated++;
+                } else {
+                    $wpdb->insert($table_name, $data);
+                    $total_imported++;
+                }
+            }
+
+            // Verificar se deve continuar paginando
+            $should_break = false;
+            if (isset($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
+                $should_break = true;
+            }
+            if (!isset($tasks_data['data']) && (count($tasks_data) < $page_size)) {
+                $should_break = true;
+            }
+
+            if ($should_break) {
+                break;
+            }
+
+            $page_number++;
+        }
+
+        $clients_processed++;
+    }
+
+    wp_send_json_success(array(
+        'message' => "Importação concluída! {$clients_processed} clientes processados.",
+        'imported' => $total_imported,
+        'updated' => $total_updated,
+        'clients_processed' => $clients_processed,
+    ));
+}
+add_action('wp_ajax_f2f_import_by_clients', 'f2f_ajax_import_by_clients');
