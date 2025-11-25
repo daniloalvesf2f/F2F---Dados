@@ -209,6 +209,8 @@ function f2f_ajax_import_taskrow_demands()
                     'status' => $task['pipelineStep'] ?? null,
                     'priority' => $task['priority'] ?? $task['Priority'] ?? null,
                     'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
+                    'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
+                    'created_at' => $task['createdDate'] ?? $task['created_at'] ?? $task['dateCreated'] ?? current_time('mysql'),
                     'attachments' => json_encode($task['attachments'] ?? array()),
                 );
 
@@ -1103,7 +1105,9 @@ function f2f_ajax_import_single_project()
                 'status' => $task['pipelineStep'] ?? null,
                 'priority' => $task['priority'] ?? $task['Priority'] ?? null,
                 'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
-                'attachments' => json_encode($task['attachments'] ?? array()),
+                'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
+                    'created_at' => $task['createdDate'] ?? $task['created_at'] ?? $task['dateCreated'] ?? current_time('mysql'),
+                    'attachments' => json_encode($task['attachments'] ?? array()),
             );
 
             if ($existing) {
@@ -1152,14 +1156,14 @@ add_action('wp_ajax_f2f_import_single_project', 'f2f_ajax_import_single_project'
 function f2f_ajax_list_clients()
 {
     if (!current_user_can('manage_options')) {
-        wp_send_json_error('Sem permissão');
+        wp_send_json_error('Sem permissï¿½o');
     }
 
     $host_name = get_option('f2f_taskrow_host_name', '');
     $api_token = get_option('f2f_taskrow_api_token', '');
 
     if (empty($host_name) || empty($api_token)) {
-        wp_send_json_error('API Taskrow não configurada');
+        wp_send_json_error('API Taskrow nï¿½o configurada');
     }
 
     // Endpoint para buscar clientes
@@ -1187,7 +1191,7 @@ function f2f_ajax_list_clients()
     $data = json_decode($body, true);
 
     if (!is_array($data)) {
-        wp_send_json_error('Resposta inválida da API');
+        wp_send_json_error('Resposta invï¿½lida da API');
     }
 
     // Formatar resposta
@@ -1208,21 +1212,21 @@ function f2f_ajax_list_clients()
 add_action('wp_ajax_f2f_list_clients', 'f2f_ajax_list_clients');
 
 /**
- * AJAX: Importar tarefas por ClientID (Nova estratégia)
+ * AJAX: Importar tarefas por ClientID (Nova estratï¿½gia)
  * Endpoint: f2f_import_by_clients
- * Busca tarefas de todos os clientes ao invés de iterar por projetos
+ * Busca tarefas de todos os clientes ao invï¿½s de iterar por projetos
  */
 function f2f_ajax_import_by_clients()
 {
     if (!current_user_can('manage_options')) {
-        wp_send_json_error('Sem permissão');
+        wp_send_json_error('Sem permissï¿½o');
     }
 
     $host_name = get_option('f2f_taskrow_host_name', '');
     $api_token = get_option('f2f_taskrow_api_token', '');
 
     if (empty($host_name) || empty($api_token)) {
-        wp_send_json_error('API Taskrow não configurada');
+        wp_send_json_error('API Taskrow nï¿½o configurada');
     }
 
     // 1. Buscar lista de clientes
@@ -1292,7 +1296,7 @@ function f2f_ajax_import_by_clients()
             ));
 
             if (is_wp_error($tasks_response)) {
-                error_log('F2F: Erro na página ' . $page_number . ' do cliente ' . $client_id . ': ' . $tasks_response->get_error_message());
+                error_log('F2F: Erro na pï¿½gina ' . $page_number . ' do cliente ' . $client_id . ': ' . $tasks_response->get_error_message());
                 break;
             }
 
@@ -1320,12 +1324,14 @@ function f2f_ajax_import_by_clients()
                     'job_number' => $task['jobNumber'] ?? 0,
                     'task_number' => $task['taskNumber'] ?? 0,
                     'client_nickname' => $client_nickname,
-                    'title' => $task['taskTitle'] ?? $task['title'] ?? 'Sem título',
+                    'title' => $task['taskTitle'] ?? $task['title'] ?? 'Sem tï¿½tulo',
                     'description' => $task['taskDescription'] ?? $task['description'] ?? '',
                     'client_name' => $client_name,
                     'status' => $task['pipelineStep'] ?? null,
                     'priority' => $task['priority'] ?? $task['Priority'] ?? null,
                     'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
+                    'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
+                    'created_at' => $task['createdDate'] ?? $task['created_at'] ?? $task['dateCreated'] ?? current_time('mysql'),
                     'attachments' => json_encode($task['attachments'] ?? array()),
                 );
 
@@ -1358,7 +1364,7 @@ function f2f_ajax_import_by_clients()
     }
 
     wp_send_json_success(array(
-        'message' => "Importação concluída! {$clients_processed} clientes processados.",
+        'message' => "Importaï¿½ï¿½o concluï¿½da! {$clients_processed} clientes processados.",
         'imported' => $total_imported,
         'updated' => $total_updated,
         'clients_processed' => $clients_processed,

@@ -169,10 +169,10 @@ $sent_demands = count(array_filter($demands, function ($d) {
                             </select>
                         </div>
                         <div class="col-md-3">
-                            <label for="filter-date" class="form-label fw-semibold">
-                                <i class="fas fa-calendar me-1"></i> Data de Vencimento
+                            <label for="filter-created-date" class="form-label fw-semibold">
+                                <i class="fas fa-calendar me-1"></i> Data de Criação
                             </label>
-                            <select id="filter-date" class="form-select">
+                            <select id="filter-created-date" class="form-select">
                                 <option value="">Todas</option>
                                 <option value="current-month" selected>Este mês</option>
                                 <option value="last-month">Mês passado</option>
@@ -520,7 +520,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
             const searchTerm = $('#search-input').val().toLowerCase();
             const statusFilter = $('#filter-status').val();
             const clientFilter = $('#filter-client').val().toLowerCase();
-            const dateFilter = $('#filter-date').val();
+            const dateFilter = $('#filter-created-date').val();
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             let visibleCount = 0;
@@ -602,14 +602,14 @@ $sent_demands = count(array_filter($demands, function ($d) {
         $('#search-input').on('keyup', filterTable);
         $('#filter-status').on('change', filterTable);
         $('#filter-client').on('change', filterTable);
-        $('#filter-date').on('change', filterTable);
+        $('#filter-created-date').on('change', filterTable);
         filterTable();
 
         $('#clear-filters-btn').on('click', function () {
             $('#search-input').val('');
             $('#filter-status').val('');
             $('#filter-client').val('');
-            $('#filter-date').val('current-month');
+            $('#filter-created-date').val('current-month');
             filterTable();
         });
 
