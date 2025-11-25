@@ -609,7 +609,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
             $('#search-input').val('');
             $('#filter-status').val('');
             $('#filter-client').val('');
-            $('#filter-created-date').val('current-month');
+            $('#filter-created-date').val('last-2-months');
             filterTable();
         });
 
