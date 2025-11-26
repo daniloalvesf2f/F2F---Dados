@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Template Name: Demandas Taskrow
  * 
@@ -94,6 +95,10 @@ $sent_demands = count(array_filter($demands, function ($d) {
                     <i class="fas fa-trash me-2"></i>
                     Apagar Todas as Demandas
                 </button>
+                <button type="button" class="btn btn-info btn-lg me-2" id="list-clients-btn">
+                    <i class="fas fa-building me-2"></i>
+                    Ver Clientes
+                </button>
                 <a href="<?php echo admin_url('admin.php?page=f2f-taskrow-config'); ?>"
                     class="btn btn-secondary btn-lg">
                     <i class="fas fa-cog me-2"></i>
@@ -105,7 +110,6 @@ $sent_demands = count(array_filter($demands, function ($d) {
             <div id="message-container"></div>
         </div>
     </div>
-
     <!-- Filtros e Busca -->
     <div class="row mb-4">
         <div class="col-12">
@@ -119,7 +123,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                             <input type="text" id="search-input" class="form-control"
                                 placeholder="Buscar por título, cliente ou ID...">
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <label for="filter-status" class="form-label fw-semibold">
                                 <i class="fas fa-filter me-1"></i> Status
                             </label>
@@ -138,7 +142,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                 foreach ($statuses as $status):
                                     // Formatar nome do status para exibição
                                     $status_display = ucfirst(str_replace('_', ' ', $status));
-                                    ?>
+                                ?>
                                     <option value="<?php echo esc_attr($status); ?>">
                                         <?php echo esc_html($status_display); ?>
                                     </option>
@@ -152,18 +156,22 @@ $sent_demands = count(array_filter($demands, function ($d) {
                             <select id="filter-client" class="form-select">
                                 <option value="">Todos</option>
                                 <?php
-                                // Usar client_nickname (mais consistente) com fallback para client_name
-                                $clients = array_unique(array_map(function ($d) {
-                                    return $d->client_nickname ? $d->client_nickname : $d->client_name;
-                                }, $demands));
+                                // Coletar client_nickname de todas as demandas (não vazio)
+                                $clients = array();
+                                foreach ($demands as $d) {
+                                    $client = trim($d->client_nickname ?: $d->client_name);
+                                    if (!empty($client) && $client !== 'Cliente Desconhecido') {
+                                        $clients[] = $client;
+                                    }
+                                }
+                                $clients = array_unique($clients);
                                 sort($clients);
+                                
                                 foreach ($clients as $client):
-                                    if (!empty($client)):
-                                        ?>
+                                ?>
                                         <option value="<?php echo esc_attr($client); ?>"><?php echo esc_html($client); ?>
                                         </option>
-                                        <?php
-                                    endif;
+                                <?php
                                 endforeach;
                                 ?>
                             </select>
@@ -174,12 +182,11 @@ $sent_demands = count(array_filter($demands, function ($d) {
                             </label>
                             <select id="filter-created-date" class="form-select">
                                 <option value="">Todas</option>
-                                <option value="current-month" selected>Este mês</option>
+                                <option value="last-2-months" selected>Últimos 2 meses</option>
+                                <option value="current-month">Este mês</option>
                                 <option value="last-month">Mês passado</option>
-                                <option value="next-month">Próximo mês</option>
-                                <option value="overdue">Atrasadas</option>
                                 <option value="this-week">Esta semana</option>
-                                <option value="next-week">Próxima semana</option>
+                                <option value="last-week">Semana passada</option>
                             </select>
                         </div>
                         <div class="col-md-1">
@@ -220,8 +227,8 @@ $sent_demands = count(array_filter($demands, function ($d) {
                             </h5>
                             <div>
                                 <span class="text-muted me-2">Mostrando <strong
-                                        id="showing-count"><?php echo count($demands); ?></strong> de <strong
-                                        id="total-demands"><?php echo count($demands); ?></strong></span>
+                                        id="showing-count"><?php echo count($demands); ?></strong> de
+                                    <strong id="total-demands"><?php echo count($demands); ?></strong></span>
                             </div>
                         </div>
                     </div>
@@ -265,7 +272,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                 $is_overdue = $days_until_due < 0;
                                             }
                                         }
-                                        ?>
+                                    ?>
                                         <tr data-demand-id="<?php echo $demand->id; ?>"
                                             data-title="<?php echo esc_attr(strtolower($demand->title)); ?>"
                                             data-client="<?php echo esc_attr(strtolower($demand->client_nickname ?: $demand->client_name)); ?>"
@@ -353,7 +360,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                             $priority_class = 'info';
                                                             break;
                                                     }
-                                                    ?>
+                                                ?>
                                                     <span class="badge bg-<?php echo $priority_class; ?> priority-badge">
                                                         <i class="fas <?php echo $priority_icon; ?> me-1"></i>
                                                         <?php echo esc_html(ucfirst($demand->priority)); ?>
@@ -387,7 +394,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                                 $date_text = 'Em ' . $days_until_due . ' dias';
                                                             }
                                                         }
-                                                        ?>
+                                                ?>
                                                         <div class="date-info">
                                                             <span class="<?php echo $date_class; ?> fw-semibold d-block">
                                                                 <i class="fas <?php echo $date_icon; ?> me-1"></i>
@@ -401,7 +408,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                                 </small>
                                                             <?php endif; ?>
                                                         </div>
-                                                        <?php
+                                                <?php
                                                     } else {
                                                         echo '<span class="text-danger" title="Data inválida"><i class="fas fa-times-circle"></i> Inválida</span>';
                                                     }
@@ -494,88 +501,125 @@ $sent_demands = count(array_filter($demands, function ($d) {
                     </div>
                     <small id="import-substatus-text" class="text-muted d-block mt-1"></small>
                 </div>
-                <div class="card bg-light border-0">
-                    <div class="card-body p-2" style="max-height: 150px; overflow-y: auto; font-size: 0.8rem;"
-                        id="import-log"></div>
-                </div>
+                <div id="import-log" style="max-height: 200px; overflow-y: auto; font-size: 0.85rem; background: #f8f9fa; padding: 0.75rem; border-radius: 6px;"></div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" id="cancel-import-btn" disabled
-                    data-bs-dismiss="modal">Fechar</button>
+                <button type="button" class="btn btn-secondary" id="cancel-import-btn" data-bs-dismiss="modal">Fechar</button>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-    var f2f_local_data = {
-        ajaxurl: '<?php echo admin_url('admin-ajax.php'); ?>',
-        nonce: '<?php echo wp_create_nonce('f2f_ajax_nonce'); ?>'
-    };
+    // v1.0.2 - Fixed createdDate scope issue
+    jQuery(document).ready(function($) {
+        // Verificar se f2f_ajax está disponível
+        if (typeof f2f_ajax === 'undefined') {
+            console.error('f2f_ajax não está definido! Verifique se o script está sendo carregado.');
+            alert('Erro: Configuração do tema não carregada corretamente. Recarregue a página.');
+            return;
+        }
+        
+        console.log('✅ Script carregado com sucesso! v1.0.2');
 
-    jQuery(document).ready(function ($) {
-        const f2f_api = (typeof f2f_ajax !== 'undefined') ? f2f_ajax : f2f_local_data;
-
+        // Filtros em tempo real
         function filterTable() {
             const searchTerm = $('#search-input').val().toLowerCase();
             const statusFilter = $('#filter-status').val();
             const clientFilter = $('#filter-client').val().toLowerCase();
             const dateFilter = $('#filter-created-date').val();
+
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            let visibleCount = 0;
 
-            $('.demand-row').each(function () {
+            let visibleCount = 0;
+            let debugInfo = {
+                filter: dateFilter,
+                today: today.toISOString(),
+                rows: []
+            };
+
+            $('.demand-row').each(function() {
                 const $row = $(this);
                 const title = $row.data('title') || '';
                 const client = $row.data('client') || '';
                 const status = $row.data('status') || '';
                 const taskrowId = $row.data('taskrow-id') || '';
-                const dueDateStr = $row.find('td:eq(5)').text().trim();
+                const createdAtStr = $row.find('td:eq(5)').text().trim();
 
-                const matchesSearch = !searchTerm || title.includes(searchTerm) || client.includes(searchTerm) || String(taskrowId).includes(searchTerm);
+                const matchesSearch = !searchTerm ||
+                    title.includes(searchTerm) ||
+                    client.includes(searchTerm) ||
+                    String(taskrowId).includes(searchTerm);
+
                 const matchesStatus = !statusFilter || status === statusFilter;
                 const matchesClient = !clientFilter || client.includes(clientFilter);
 
                 let matchesDate = true;
-                if (dateFilter && dueDateStr && dueDateStr !== 'Sem data') {
-                    const dateParts = dueDateStr.split('/');
+                
+                if (dateFilter && createdAtStr && createdAtStr !== 'N/A') {
+                    const dateParts = createdAtStr.split('/');
                     if (dateParts.length === 3) {
-                        const dueDate = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
-                        dueDate.setHours(0, 0, 0, 0);
-                        const currentMonth = today.getMonth();
-                        const currentYear = today.getFullYear();
-                        const dueMonth = dueDate.getMonth();
-                        const dueYear = dueDate.getFullYear();
+                        try {
+                            const createdDate = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
+                            
+                            // Verificar se a data é válida
+                            if (isNaN(createdDate.getTime())) {
+                                matchesDate = false;
+                            } else {
+                                createdDate.setHours(0, 0, 0, 0);
 
-                        switch (dateFilter) {
-                            case 'current-month': matchesDate = dueMonth === currentMonth && dueYear === currentYear; break;
-                            case 'last-month':
-                                const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-                                const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-                                matchesDate = dueMonth === lastMonth && dueYear === lastMonthYear;
-                                break;
-                            case 'next-month':
-                                const nextMonth = currentMonth === 11 ? 0 : currentMonth + 1;
-                                const nextMonthYear = currentMonth === 11 ? currentYear + 1 : currentYear;
-                                matchesDate = dueMonth === nextMonth && dueYear === nextMonthYear;
-                                break;
-                            case 'overdue': matchesDate = dueDate < today; break;
-                            case 'this-week':
-                                const weekStart = new Date(today);
-                                weekStart.setDate(today.getDate() - today.getDay());
-                                const weekEnd = new Date(weekStart);
-                                weekEnd.setDate(weekStart.getDate() + 6);
-                                matchesDate = dueDate >= weekStart && dueDate <= weekEnd;
-                                break;
-                            case 'next-week':
-                                const nextWeekStart = new Date(today);
-                                nextWeekStart.setDate(today.getDate() - today.getDay() + 7);
-                                const nextWeekEnd = new Date(nextWeekStart);
-                                nextWeekEnd.setDate(nextWeekStart.getDate() + 6);
-                                matchesDate = dueDate >= nextWeekStart && dueDate <= nextWeekEnd;
-                                break;
+                                const currentMonth = today.getMonth();
+                                const currentYear = today.getFullYear();
+                                const createdMonth = createdDate.getMonth();
+                                const createdYear = createdDate.getFullYear();
+
+                                switch (dateFilter) {
+                                    case 'last-2-months':
+                                        const twoMonthsAgo = new Date(today);
+                                        twoMonthsAgo.setMonth(today.getMonth() - 2);
+                                        matchesDate = createdDate >= twoMonthsAgo;
+                                        break;
+                                    case 'current-month':
+                                        matchesDate = createdMonth === currentMonth && createdYear === currentYear;
+                                        break;
+                                    case 'last-month':
+                                        const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+                                        const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+                                        matchesDate = createdMonth === lastMonth && createdYear === lastMonthYear;
+                                        break;
+                                    case 'this-week':
+                                        const weekStart = new Date(today);
+                                        weekStart.setDate(today.getDate() - today.getDay());
+                                        const weekEnd = new Date(weekStart);
+                                        weekEnd.setDate(weekStart.getDate() + 6);
+                                        matchesDate = createdDate >= weekStart && createdDate <= weekEnd;
+                                        break;
+                                    case 'last-week':
+                                        const lastWeekStart = new Date(today);
+                                        lastWeekStart.setDate(today.getDate() - today.getDay() - 7);
+                                        const lastWeekEnd = new Date(lastWeekStart);
+                                        lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
+                                        matchesDate = createdDate >= lastWeekStart && createdDate <= lastWeekEnd;
+                                        break;
+                                }
+                                
+                                // Debug: salvar info da row
+                                if (dateFilter === 'last-2-months' && debugInfo.rows.length < 10) {
+                                    debugInfo.rows.push({
+                                        id: taskrowId,
+                                        created: createdAtStr,
+                                        parsed: createdDate.toISOString(),
+                                        matches: matchesDate
+                                    });
+                                }
+                            }
+                        } catch (e) {
+                            console.error('Erro ao processar data:', createdAtStr, e);
+                            matchesDate = false;
                         }
+                    } else {
+                        matchesDate = false;
                     }
                 } else if (dateFilter) {
                     matchesDate = false;
@@ -589,23 +633,47 @@ $sent_demands = count(array_filter($demands, function ($d) {
                 }
             });
 
+            // Debug log
+            if (dateFilter === 'last-2-months' && debugInfo.rows.length > 0) {
+                console.log('=== DEBUG FILTRO DE DATA ===');
+                console.log('Filtro:', dateFilter);
+                console.log('Hoje:', debugInfo.today);
+                console.log('Total de rows:', debugInfo.rows.length);
+                console.log('Visíveis:', visibleCount);
+                console.table(debugInfo.rows.slice(0, 10)); // Primeiras 10 rows
+            }
+
             $('#showing-count').text(visibleCount);
+
+            // Mostrar mensagem se nenhum resultado
             if (visibleCount === 0) {
                 if ($('#no-results-row').length === 0) {
-                    $('#demands-table tbody').append('<tr id="no-results-row"><td colspan="7" class="text-center py-5"><i class="fas fa-search fa-3x text-muted mb-3"></i><h5 class="text-muted">Nenhuma demanda encontrada</h5><p class="text-muted">Tente ajustar os filtros de busca</p></td></tr>');
+                    $('#demands-table tbody').append(
+                        '<tr id="no-results-row">' +
+                        '<td colspan="7" class="text-center py-5">' +
+                        '<i class="fas fa-search fa-3x text-muted mb-3"></i>' +
+                        '<h5 class="text-muted">Nenhuma demanda encontrada</h5>' +
+                        '<p class="text-muted">Tente ajustar os filtros de busca</p>' +
+                        '</td>' +
+                        '</tr>'
+                    );
                 }
             } else {
                 $('#no-results-row').remove();
             }
         }
 
+        // Event listeners para filtros
         $('#search-input').on('keyup', filterTable);
         $('#filter-status').on('change', filterTable);
         $('#filter-client').on('change', filterTable);
         $('#filter-created-date').on('change', filterTable);
+
+        // Aplicar filtro de data padrão (últimos 2 meses) ao carregar
         filterTable();
 
-        $('#clear-filters-btn').on('click', function () {
+        // Limpar filtros
+        $('#clear-filters-btn').on('click', function() {
             $('#search-input').val('');
             $('#filter-status').val('');
             $('#filter-client').val('');
@@ -613,62 +681,92 @@ $sent_demands = count(array_filter($demands, function ($d) {
             filterTable();
         });
 
-        $(document).on('click', '.copy-info-btn', function () {
+        // Copiar informações
+        $(document).on('click', '.copy-info-btn', function() {
             const title = $(this).data('title');
             const client = $(this).data('client');
             const copyText = `Tarefa: ${title}\nCliente: ${client}`;
-            navigator.clipboard.writeText(copyText).then(function () {
+
+            navigator.clipboard.writeText(copyText).then(function() {
                 showMessage('success', '<i class="fas fa-check-circle me-2"></i>Informações copiadas!');
-            }).catch(function () {
-                showMessage('warning', '<i class="fas fa-exclamation-triangle me-2"></i>Erro ao copiar.');
+            }).catch(function() {
+                showMessage('warning', '<i class="fas fa-exclamation-triangle me-2"></i>Erro ao copiar. Tente novamente.');
             });
         });
 
-        $('#test-connection-btn').on('click', function () {
+        // Testar Conexão Taskrow
+        $('#test-connection-btn').on('click', function() {
             const $btn = $(this);
             const originalText = $btn.html();
-            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-2"></i>Testando...');
-            $.post(f2f_api.ajaxurl, {
-                action: 'f2f_test_taskrow_connection',
-                nonce: f2f_api.nonce
-            }).done(function (response) {
-                if (response.success) {
-                    showMessage('success', `<strong><i class="fas fa-check-circle me-2"></i>Conexão bem-sucedida!</strong><br>${response.data.message}`);
-                } else {
-                    showMessage('danger', `<strong><i class="fas fa-times-circle me-2"></i>Erro na conexão:</strong><br>${response.data}`);
-                }
-            }).fail(function () {
-                showMessage('danger', '<strong><i class="fas fa-exclamation-triangle me-2"></i>Erro:</strong> Falha na requisição AJAX.');
-            }).always(function () {
-                $btn.prop('disabled', false).html(originalText);
-            });
+
+            $btn.prop('disabled', true)
+                .html('<i class="fas fa-spinner fa-spin me-2"></i>Testando...');
+
+            $.post(f2f_ajax.ajaxurl, {
+                    action: 'f2f_test_taskrow_connection',
+                    nonce: f2f_ajax.nonce
+                })
+                .done(function(response) {
+                    if (response.success) {
+                        showMessage('success', `
+                    <strong><i class="fas fa-check-circle me-2"></i>Conexão bem-sucedida!</strong><br>
+                    ${response.data.message}
+                `);
+                    } else {
+                        showMessage('danger', `
+                    <strong><i class="fas fa-times-circle me-2"></i>Erro na conexão:</strong><br>
+                    ${response.data}
+                `);
+                    }
+                })
+                .fail(function(xhr, status, error) {
+                    showMessage('danger', `<strong><i class="fas fa-exclamation-triangle me-2"></i>Erro:</strong> Falha na requisição AJAX.`);
+                })
+                .always(function() {
+                    $btn.prop('disabled', false).html(originalText);
+                });
         });
 
-        $('#clear-all-demands-btn').on('click', function () {
+        // Apagar Todas as Demandas
+        $('#clear-all-demands-btn').on('click', function() {
             if (!confirm('⚠️ ATENÇÃO: Esta ação irá apagar TODAS as demandas importadas do Taskrow.\n\nIsso não pode ser desfeito!\n\nTem certeza que deseja continuar?')) {
                 return;
             }
+
             const $btn = $(this);
             const originalText = $btn.html();
-            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-2"></i>Apagando...');
-            $.post(f2f_api.ajaxurl, {
-                action: 'f2f_clear_all_taskrow_demands',
-                nonce: f2f_api.nonce
-            }).done(function (response) {
-                if (response.success) {
-                    showMessage('success', `<strong><i class="fas fa-check-circle me-2"></i>Demandas apagadas com sucesso!</strong><br>${response.data.message}`);
-                    setTimeout(() => location.reload(), 2000);
-                } else {
-                    showMessage('danger', `<strong><i class="fas fa-times-circle me-2"></i>Erro ao apagar demandas:</strong><br>${response.data}`);
-                }
-            }).fail(function () {
-                showMessage('danger', '<i class="fas fa-exclamation-triangle me-2"></i>Erro ao apagar demandas');
-            }).always(function () {
-                $btn.prop('disabled', false).html(originalText);
-            });
+
+            $btn.prop('disabled', true)
+                .html('<i class="fas fa-spinner fa-spin me-2"></i>Apagando...');
+
+            $.post(f2f_ajax.ajaxurl, {
+                    action: 'f2f_clear_all_taskrow_demands',
+                    nonce: f2f_ajax.nonce
+                })
+                .done(function(response) {
+                    if (response.success) {
+                        showMessage('success', `
+                    <strong><i class="fas fa-check-circle me-2"></i>Demandas apagadas com sucesso!</strong><br>
+                    ${response.data.message}
+                `);
+                        setTimeout(() => location.reload(), 2000);
+                    } else {
+                        showMessage('danger', `
+                    <strong><i class="fas fa-times-circle me-2"></i>Erro ao apagar demandas:</strong><br>
+                    ${response.data}
+                `);
+                    }
+                })
+                .fail(function() {
+                    showMessage('danger', '<i class="fas fa-exclamation-triangle me-2"></i>Erro ao apagar demandas');
+                })
+                .always(function() {
+                    $btn.prop('disabled', false).html(originalText);
+                });
         });
 
-        $('#import-demands-btn').on('click', function () {
+        // Importar Demandas
+        $('#import-demands-btn').on('click', function() {
             const $modal = new bootstrap.Modal(document.getElementById('importProgressModal'));
             const $progressBar = $('#import-progress-bar');
             const $statusText = $('#import-status-text');
@@ -679,7 +777,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
             $progressBar.css('width', '0%').text('0%').removeClass('bg-success bg-danger');
             $log.html('');
             $closeBtn.prop('disabled', true);
-            $statusText.text('Buscando clientes...');
+            $statusText.text('Buscando projetos...');
             $subStatusText.text('Conectando à API...');
             $modal.show();
 
@@ -690,116 +788,263 @@ $sent_demands = count(array_filter($demands, function ($d) {
                 $log.scrollTop($log[0].scrollHeight);
             }
 
-            // Nova estratégia: importar por clientes ao invés de projetos
-            addLog('Iniciando importação por clientes...', 'info');
+            addLog('Iniciando importação...', 'info');
             $statusText.text('Importando tarefas...');
             $subStatusText.text('Processando todos os clientes');
             $progressBar.css('width', '50%').text('50%');
 
-            $.post(f2f_api.ajaxurl, {
-                action: 'f2f_import_by_clients',
-                nonce: f2f_api.nonce
-            }).done(function (response) {
-                if (!response.success) {
-                    addLog('Erro ao importar: ' + response.data, 'error');
-                    $statusText.text('Erro na importação');
+            $.post(f2f_ajax.ajaxurl, {
+                    action: 'f2f_import_by_clients',
+                    nonce: f2f_ajax.nonce
+                })
+                .done(function(response) {
+                    if (!response.success) {
+                        addLog('Erro ao importar: ' + response.data, 'error');
+                        $statusText.text('Erro na importação');
+                        $progressBar.addClass('bg-danger');
+                        $closeBtn.prop('disabled', false);
+                        return;
+                    }
+
+                    const imported = response.data.imported || 0;
+                    const updated = response.data.updated || 0;
+                    const clientsProcessed = response.data.clients_processed || 0;
+
+                    addLog(`Importação concluída! ${clientsProcessed} clientes processados.`, 'success');
+                    addLog(`Total: ${imported} novas tarefas, ${updated} atualizadas.`, 'success');
+
+                    $statusText.text('Importação Concluída!');
+                    $subStatusText.text(`${clientsProcessed} clientes | ${imported} novos | ${updated} atualizados`);
+                    $progressBar.css('width', '100%').text('100%').addClass('bg-success');
+                    $closeBtn.prop('disabled', false).text('Concluir e Recarregar');
+
+                    $closeBtn.off('click').on('click', function() {
+                        location.reload();
+                    });
+
+                })
+                .fail(function() {
+                    addLog('Erro fatal ao conectar com servidor.', 'error');
+                    $statusText.text('Erro de Conexão');
                     $progressBar.addClass('bg-danger');
                     $closeBtn.prop('disabled', false);
-                    return;
-                }
-
-                const imported = response.data.imported || 0;
-                const updated = response.data.updated || 0;
-                const clientsProcessed = response.data.clients_processed || 0;
-
-                addLog(`Importação concluída! ${clientsProcessed} clientes processados.`, 'success');
-                addLog(`Total: ${imported} novas tarefas, ${updated} atualizadas.`, 'success');
-
-                $statusText.text('Importação Concluída!');
-                $subStatusText.text(`${clientsProcessed} clientes | ${imported} novos | ${updated} atualizados`);
-                $progressBar.css('width', '100%').text('100%').addClass('bg-success');
-                $closeBtn.prop('disabled', false).text('Concluir e Recarregar');
-
-                $closeBtn.off('click').on('click', function () {
-                    location.reload();
                 });
-
-            }).fail(function () {
-                addLog('Erro fatal ao conectar com servidor.', 'error');
-                $statusText.text('Erro de Conexão');
-                $progressBar.addClass('bg-danger');
-                $closeBtn.prop('disabled', false);
-            });
         });
 
-        $(document).on('click', '.view-details-btn', function () {
-            const $btn = $(this);
-            const $row = $btn.closest('tr');
-            const taskrowId = $row.data('taskrow-id') || $btn.data('demand-id');
-            const title = $row.data('title') || $row.find('.task-info strong').text();
-            const description = $row.find('.task-description').text() || 'Sem descrição disponível';
-            const client = $row.data('client') || $row.find('.client-info .badge').text();
-            const status = $row.data('status') || $row.find('.status-badge').text();
-            const priority = $row.find('.priority-badge').text().trim() || 'Não definida';
-            const dueDate = $row.find('.date-info').text().trim() || 'Não definida';
+        // Ver Detalhes
+        $(document).on('click', '.view-details-btn', function() {
+            const demandId = $(this).data('demand-id');
+            const $row = $('[data-demand-id="' + demandId + '"]');
 
+            // Buscar dados da linha com mais informações
+            const taskrowId = $row.data('taskrow-id');
+            const title = $row.find('.task-info strong').text();
+            const description = $row.find('.task-description').text() || 'Sem descrição disponível';
+            const client = $row.find('.client-info .badge').text().replace(/\s+/g, ' ').trim();
+            const status = $row.find('.status-badge').text().replace(/\s+/g, ' ').trim();
+            const priority = $row.find('.priority-badge').text().trim() || 'Não definida';
+            const dueDate = $row.find('.date-info span:first').text() || 'Não definida';
+
+            // Montar conteúdo do modal com design melhorado
             let html = `
-        <div class="demand-details">
-            <div class="detail-section mb-4">
-                <div class="d-flex justify-content-between align-items-start mb-3">
-                    <h4 class="mb-0">${title}</h4>
-                    <span class="badge bg-secondary">#${taskrowId}</span>
+            <div class="demand-details">
+                <div class="detail-section mb-4">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <h4 class="mb-0">${title}</h4>
+                        <span class="badge bg-secondary">#${taskrowId}</span>
+                    </div>
+                    <p class="text-muted mb-0">${description}</p>
                 </div>
-                <p class="text-muted mb-0">${description}</p>
+                
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="detail-card">
+                            <div class="detail-label">
+                                <i class="fas fa-building text-primary me-2"></i>Cliente
+                            </div>
+                            <div class="detail-value">${client}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="detail-card">
+                            <div class="detail-label">
+                                <i class="fas fa-info-circle text-info me-2"></i>Status
+                            </div>
+                            <div class="detail-value">${status}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="detail-card">
+                            <div class="detail-label">
+                                <i class="fas fa-flag text-warning me-2"></i>Prioridade
+                            </div>
+                            <div class="detail-value">${priority}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="detail-card">
+                            <div class="detail-label">
+                                <i class="fas fa-calendar-alt text-success me-2"></i>Data de Entrega
+                            </div>
+                            <div class="detail-value">${dueDate}</div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="row g-3">
-                <div class="col-md-6">
-                    <div class="detail-card">
-                        <div class="detail-label"><i class="fas fa-building text-primary me-2"></i>Cliente</div>
-                        <div class="detail-value">${client}</div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="detail-card">
-                        <div class="detail-label"><i class="fas fa-info-circle text-info me-2"></i>Status</div>
-                        <div class="detail-value">${status}</div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="detail-card">
-                        <div class="detail-label"><i class="fas fa-flag text-warning me-2"></i>Prioridade</div>
-                        <div class="detail-value">${priority}</div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="detail-card">
-                        <div class="detail-label"><i class="fas fa-calendar-alt text-success me-2"></i>Data de Entrega</div>
-                        <div class="detail-value">${dueDate}</div>
-                    </div>
-                </div>
-            </div>
-        </div>
         `;
 
             $('#modal-demand-details').html(html);
             new bootstrap.Modal($('#demandDetailsModal')[0]).show();
         });
 
-        $('.send-to-clickup-btn').on('click', function () {
-            const demandId = $(this).data('demand-id');
-            if (!confirm('Deseja enviar esta demanda para o ClickUp?')) return;
-            showMessage('info', 'Funcionalidade em desenvolvimento.');
+        // Enviar para ClickUp
+        $(document).on('click', '.send-to-clickup-btn', function() {
+            const $btn = $(this);
+            const demandId = $btn.data('demand-id');
+            const originalText = $btn.html();
+
+            if (!confirm('Deseja enviar esta demanda para o ClickUp?')) {
+                return;
+            }
+
+            $btn.prop('disabled', true)
+                .html('<i class="fas fa-spinner fa-spin"></i>');
+
+            $.post(f2f_ajax.ajaxurl, {
+                    action: 'f2f_send_demand_to_clickup',
+                    demand_id: demandId,
+                    nonce: f2f_ajax.nonce
+                })
+                .done(function(response) {
+                    if (response.success) {
+                        showMessage('success', '<i class="fas fa-check-circle me-2"></i>' + response.data.message);
+                        setTimeout(() => location.reload(), 2000);
+                    } else {
+                        showMessage('danger', '<i class="fas fa-times-circle me-2"></i>' + response.data);
+                        $btn.prop('disabled', false).html(originalText);
+                    }
+                })
+                .fail(function() {
+                    showMessage('danger', '<i class="fas fa-exclamation-triangle me-2"></i>Erro ao enviar demanda');
+                    $btn.prop('disabled', false).html(originalText);
+                });
         });
 
+        // Botão para listar clientes
+        $('#list-clients-btn').on('click', function() {
+            const $btn = $(this);
+            const originalText = $btn.html();
+
+            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-2"></i>Carregando...');
+
+            $.post(f2f_ajax.ajaxurl, {
+                    action: 'f2f_list_taskrow_clients',
+                    nonce: f2f_ajax.nonce
+                })
+                .done(function(response) {
+                    if (response.success) {
+                        const clients = response.data.clients;
+                        const total = response.data.total;
+
+                        let html = `<div class="modal fade show" style="display:block; background: rgba(0,0,0,0.5);" tabindex="-1">
+                            <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                                <div class="modal-content">
+                                    <div class="modal-header bg-primary text-white">
+                                        <h5 class="modal-title">
+                                            <i class="fas fa-building me-2"></i>
+                                            Clientes Taskrow (${total})
+                                        </h5>
+                                        <button type="button" class="btn-close btn-close-white close-clients-modal"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-hover">
+                                                <thead class="table-light sticky-top">
+                                                    <tr>
+                                                        <th>ID</th>
+                                                        <th>Nome</th>
+                                                        <th>Nickname</th>
+                                                        <th>Status</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>`;
+
+                        clients.forEach(client => {
+                            const status = client.active ? 
+                                '<span class="badge bg-success">Ativo</span>' : 
+                                '<span class="badge bg-secondary">Inativo</span>';
+                            
+                            html += `<tr>
+                                <td><code>${client.id}</code></td>
+                                <td>${client.name}</td>
+                                <td><strong>${client.nickname}</strong></td>
+                                <td>${status}</td>
+                            </tr>`;
+                        });
+
+                        html += `</tbody>
+                                            </table>
+                                        </div>
+                                        <div class="mt-3">
+                                            <button class="btn btn-secondary" onclick="console.log(${JSON.stringify(clients)})">
+                                                <i class="fas fa-code me-2"></i>Log JSON no Console
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary close-clients-modal">Fechar</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>`;
+
+                        $('body').append(html);
+
+                        // Fechar modal
+                        $('.close-clients-modal').on('click', function() {
+                            $('.modal').remove();
+                        });
+
+                        // Log no console
+                        console.log('=== CLIENTES TASKROW ===');
+                        console.log('Total:', total);
+                        console.table(clients);
+                    } else {
+                        showMessage('danger', '<i class="fas fa-times-circle me-2"></i>' + response.data);
+                    }
+                })
+                .fail(function() {
+                    showMessage('danger', '<i class="fas fa-exclamation-triangle me-2"></i>Erro ao buscar clientes');
+                })
+                .always(function() {
+                    $btn.prop('disabled', false).html(originalText);
+                });
+        });
+
+        // Função auxiliar para mostrar mensagens com animação
         function showMessage(type, message) {
-            const alertClass = type === 'success' ? 'alert-success' : type === 'warning' ? 'alert-warning' : type === 'danger' ? 'alert-danger' : 'alert-info';
-            const html = `<div class="alert ${alertClass} alert-dismissible fade show shadow-sm" role="alert" style="animation: slideInDown 0.3s ease-out;">${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+            const alertClass = type === 'success' ? 'alert-success' :
+                type === 'warning' ? 'alert-warning' :
+                type === 'danger' ? 'alert-danger' : 'alert-info';
+
+            const html = `<div class="alert ${alertClass} alert-dismissible fade show shadow-sm" role="alert" style="animation: slideInDown 0.3s ease-out;">
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>`;
+
             $('#message-container').html(html);
+
             setTimeout(() => {
-                $('.alert').fadeOut(500, function () { $(this).remove(); });
+                $('.alert').fadeOut(500, function() {
+                    $(this).remove();
+                });
             }, 5000);
         }
 
+        // Tooltips
         $('[title]').tooltip();
     });
 </script>
