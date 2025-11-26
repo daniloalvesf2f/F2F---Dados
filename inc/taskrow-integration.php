@@ -74,6 +74,76 @@ function f2f_create_taskrow_demands_table()
 add_action('after_setup_theme', 'f2f_create_taskrow_demands_table');
 
 /**
+ * Obter mapa de usuários (UserID => UserLogin) do Taskrow.
+ * Usa cache estático durante a execução para evitar chamadas repetidas
+ * e tenta usar a classe central quando disponível.
+ *
+ * @param string $api_token
+ * @param string $host_name
+ * @return array [ '29116' => 'Raissa Rodrigues', ... ]
+ */
+function f2f_taskrow_get_user_map($api_token, $host_name)
+{
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
+
+    // Tenta via classe central se existir
+    if (class_exists('F2F_Taskrow_API')) {
+        $api = F2F_Taskrow_API::get_instance();
+        if ($api->is_configured()) {
+            $resp = $api->get_users();
+            $items = is_array($resp) ? ($resp['items'] ?? $resp) : array();
+            $map = array();
+            if (is_array($items)) {
+                foreach ($items as $u) {
+                    $id = (string)($u['UserID'] ?? $u['userID'] ?? $u['id'] ?? '');
+                    if ($id === '') continue;
+                    $login = $u['UserLogin'] ?? $u['userLogin'] ?? $u['FullName'] ?? $u['fullName'] ?? '';
+                    if ($login === '' && isset($u['MainEmail'])) {
+                        $login = $u['MainEmail'];
+                    }
+                    $map[$id] = $login;
+                }
+            }
+            $cache = $map;
+            return $cache;
+        }
+    }
+
+    // Fallback manual para v1 User/ListUsers
+    $url = 'https://' . $host_name . '/api/v1/User/ListUsers';
+    $response = wp_remote_request($url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 40,
+        'sslverify' => false,
+    ));
+    $map = array();
+    if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) >= 200 && wp_remote_retrieve_response_code($response) < 300) {
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        $items = is_array($data) ? ($data['items'] ?? $data) : array();
+        if (is_array($items)) {
+            foreach ($items as $u) {
+                $id = (string)($u['UserID'] ?? $u['userID'] ?? $u['id'] ?? '');
+                if ($id === '') continue;
+                $login = $u['UserLogin'] ?? $u['userLogin'] ?? $u['FullName'] ?? $u['fullName'] ?? '';
+                if ($login === '' && isset($u['MainEmail'])) {
+                    $login = $u['MainEmail'];
+                }
+                $map[$id] = $login;
+            }
+        }
+    }
+    $cache = $map;
+    return $cache;
+}
+
+/**
  * AJAX: Importar demandas do Taskrow (TODAS as tasks)
  */
 function f2f_ajax_import_taskrow_demands()
@@ -123,6 +193,9 @@ function f2f_ajax_import_taskrow_demands()
     // Agora buscar tasks de TODOS os projetos e IMPORTAR DIRETO
     $tasks_url = 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch';
 
+    // Mapa de usuários para resolver ownerUserID -> ownerUserLogin quando necessário
+    $user_map = f2f_taskrow_get_user_map($api_token, $host_name);
+
     // Para cada projeto, buscar suas tasks com paginação até esgotar
     foreach ($projects as $index => $project) {
         $project_id = $project['jobID'] ?? null;
@@ -167,7 +240,7 @@ function f2f_ajax_import_taskrow_demands()
             }
 
             $tasks_data = json_decode(wp_remote_retrieve_body($tasks_response), true);
-            $page_tasks = $tasks_data['data'] ?? $tasks_data;
+            $page_tasks = is_array($tasks_data) ? ($tasks_data['data'] ?? $tasks_data) : array();
 
             if (empty($page_tasks) || !is_array($page_tasks)) {
                 error_log('F2F: Projeto ' . $project_id . ' - página ' . $page_number . ' vazia. Encerrando.');
@@ -198,6 +271,12 @@ function f2f_ajax_import_taskrow_demands()
                     $task_id
                 ));
 
+                $owner_id = isset($task['ownerUserID']) ? (string)$task['ownerUserID'] : null;
+                $owner_login = $task['ownerUserLogin'] ?? null;
+                if (!$owner_login && $owner_id && isset($user_map[$owner_id])) {
+                    $owner_login = $user_map[$owner_id];
+                }
+
                 $data = array(
                     'taskrow_id' => $task_id,
                     'job_number' => $task['jobNumber'] ?? 0,
@@ -209,9 +288,10 @@ function f2f_ajax_import_taskrow_demands()
                     'status' => $task['pipelineStep'] ?? null,
                     'priority' => $task['priority'] ?? $task['Priority'] ?? null,
                     'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
-                    'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
                     'created_at' => $task['createdDate'] ?? $task['created_at'] ?? $task['dateCreated'] ?? current_time('mysql'),
                     'attachments' => json_encode($task['attachments'] ?? array()),
+                    'owner_user_id' => $owner_id,
+                    'owner_user_login' => $owner_login,
                 );
 
                 if ($existing) {
@@ -225,11 +305,11 @@ function f2f_ajax_import_taskrow_demands()
 
             // Verificar se deve continuar paginando ANTES de liberar memória
             $should_break = false;
-            if (isset($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
+            if (isset($tasks_data['data']) && is_array($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
                 error_log('F2F: Projeto ' . $project_id . ' - última página alcançada (menos que ' . $page_size . ').');
                 $should_break = true;
             }
-            if (!isset($tasks_data['data']) && (count($tasks_data) < $page_size)) {
+            if (!isset($tasks_data['data']) && is_array($tasks_data) && (count($tasks_data) < $page_size)) {
                 error_log('F2F: Projeto ' . $project_id . ' - última página (array raiz menor que ' . $page_size . ').');
                 $should_break = true;
             }
@@ -1012,6 +1092,8 @@ function f2f_ajax_import_single_project()
     $total_updated = 0;
 
     $tasks_url = 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch';
+    // Mapa de usuários para resolver ownerUserID -> ownerUserLogin quando faltante
+    $user_map = f2f_taskrow_get_user_map($api_token, $host_name);
 
     error_log("F2F: Iniciando importação do projeto #{$project_id}: {$project_title}");
 
@@ -1045,7 +1127,7 @@ function f2f_ajax_import_single_project()
         }
 
         $tasks_data = json_decode(wp_remote_retrieve_body($tasks_response), true);
-        $page_tasks = $tasks_data['data'] ?? $tasks_data;
+        $page_tasks = is_array($tasks_data) ? ($tasks_data['data'] ?? $tasks_data) : array();
 
         if (empty($page_tasks) || !is_array($page_tasks)) {
             break;
@@ -1071,6 +1153,12 @@ function f2f_ajax_import_single_project()
                 $task_id
             ));
 
+            $owner_id = isset($task['ownerUserID']) ? (string)$task['ownerUserID'] : null;
+            $owner_login = $task['ownerUserLogin'] ?? null;
+            if (!$owner_login && $owner_id && isset($user_map[$owner_id])) {
+                $owner_login = $user_map[$owner_id];
+            }
+
             $data = array(
                 'taskrow_id' => $task_id,
                 'job_number' => $task['jobNumber'] ?? 0,
@@ -1082,9 +1170,10 @@ function f2f_ajax_import_single_project()
                 'status' => $task['pipelineStep'] ?? null,
                 'priority' => $task['priority'] ?? $task['Priority'] ?? null,
                 'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
-                'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
                 'created_at' => $task['createdDate'] ?? $task['created_at'] ?? $task['dateCreated'] ?? current_time('mysql'),
                 'attachments' => json_encode($task['attachments'] ?? array()),
+                'owner_user_id' => $owner_id,
+                'owner_user_login' => $owner_login,
             );
 
             if ($existing) {
@@ -1098,10 +1187,10 @@ function f2f_ajax_import_single_project()
 
         // Se retornou menos que page_size, acabou (verificar ANTES de liberar memória)
         $should_break = false;
-        if (isset($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
+        if (isset($tasks_data['data']) && is_array($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
             $should_break = true;
         }
-        if (!isset($tasks_data['data']) && (count($tasks_data) < $page_size)) {
+        if (!isset($tasks_data['data']) && is_array($tasks_data) && (count($tasks_data) < $page_size)) {
             $should_break = true;
         }
 
@@ -1252,6 +1341,8 @@ function f2f_ajax_import_by_clients()
 
     // 2. Buscar tarefas dos PROJETOS específicos usando JobNumber -> JobID
     $tasks_url = 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch';
+    // Mapa de usuários para resolver ownerUserID -> ownerUserLogin quando faltante
+    $user_map = f2f_taskrow_get_user_map($api_token, $host_name);
     $search_jobs_url_base = 'https://' . $host_name . '/api/v1/Search/SearchJobs?q=';
 
     // Mapeamento dos projetos (clientNickname + jobNumber) baseado nas URLs enviadas
@@ -1357,6 +1448,12 @@ function f2f_ajax_import_by_clients()
                     $task_id
                 ));
 
+                $owner_id = isset($task['ownerUserID']) ? (string)$task['ownerUserID'] : null;
+                $owner_login = $task['ownerUserLogin'] ?? null;
+                if (!$owner_login && $owner_id && isset($user_map[$owner_id])) {
+                    $owner_login = $user_map[$owner_id];
+                }
+
                 $data = array(
                     'taskrow_id' => $task_id,
                     'job_number' => $task['jobNumber'] ?? 0,
@@ -1370,6 +1467,8 @@ function f2f_ajax_import_by_clients()
                     'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
                     'created_at' => $task['createdDate'] ?? $task['created_at'] ?? $task['dateCreated'] ?? current_time('mysql'),
                     'attachments' => json_encode($task['attachments'] ?? array()),
+                    'owner_user_id' => $owner_id,
+                    'owner_user_login' => $owner_login,
                 );
 
                 if ($existing) {

@@ -159,7 +159,13 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                 // Coletar client_nickname de todas as demandas (não vazio)
                                 $clients = array();
                                 foreach ($demands as $d) {
-                                    $client = trim($d->client_nickname ?: $d->client_name);
+                                    $client_val = '';
+                                    if (!empty($d->client_nickname)) {
+                                        $client_val = (string)$d->client_nickname;
+                                    } elseif (!empty($d->client_name)) {
+                                        $client_val = (string)$d->client_name;
+                                    }
+                                    $client = trim(isset($client_val) ? (string)$client_val : '');
                                     if (!empty($client) && $client !== 'Cliente Desconhecido') {
                                         $clients[] = $client;
                                     }
@@ -174,6 +180,40 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                 <?php
                                 endforeach;
                                 ?>
+                            </select>
+                        </div>
+                        <!-- Novo filtro: Responsável -->
+                        <div class="col-md-2">
+                            <label for="filter-owner" class="form-label fw-semibold">
+                                <i class="fas fa-user-check me-1"></i> Responsável
+                            </label>
+                            <select id="filter-owner" class="form-select">
+                                <option value="">Todos</option>
+                                <?php
+                                $owners = array();
+                                foreach ($demands as $d) {
+                                    if (!empty($d->owner_user_login)) {
+                                        $login = strtolower((string)$d->owner_user_login);
+                                        $owners[] = $login;
+                                    }
+                                }
+                                $owners = array_unique($owners);
+                                sort($owners);
+                                foreach ($owners as $login) {
+                                    $label = ucwords(str_replace(array('.', '_'), ' ', $login));
+                                    echo '<option value="' . esc_attr($login) . '">' . esc_html($label) . '</option>';
+                                }
+                                ?>
+                            </select>
+                        </div>
+                        <!-- Novo filtro: Grupo/Área -->
+                        <div class="col-md-2">
+                            <label for="filter-group" class="form-label fw-semibold">
+                                <i class="fas fa-layer-group me-1"></i> Grupo
+                            </label>
+                            <select id="filter-group" class="form-select">
+                                <option value="">Todos</option>
+                                <option value="tech">Tech (Ingrid Bisi)</option>
                             </select>
                         </div>
                         <div class="col-md-3">
@@ -273,11 +313,44 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                             }
                                         }
                                     ?>
+                                        <?php
+                                            $titleSafe = isset($demand->title) ? (string)$demand->title : '';
+                                            $statusSafe = isset($demand->status) ? (string)$demand->status : '';
+                                            $descSafe = isset($demand->description) ? (string)$demand->description : '';
+                                            $ownerLoginSafe = isset($demand->owner_user_login) ? (string)$demand->owner_user_login : '';
+                                            $group = '';
+                                            if (
+                                                stripos($statusSafe, 'tech') !== false ||
+                                                stripos($titleSafe, 'tech') !== false ||
+                                                stripos($descSafe, 'tech') !== false ||
+                                                stripos($ownerLoginSafe, 'ingrid') !== false ||
+                                                stripos($ownerLoginSafe, 'raissa') !== false
+                                            ) {
+                                                $group = 'tech';
+                                            }
+                                            $clientSafeRaw = '';
+                                            if (!empty($demand->client_nickname)) {
+                                                $clientSafeRaw = (string)$demand->client_nickname;
+                                            } elseif (!empty($demand->client_name)) {
+                                                $clientSafeRaw = (string)$demand->client_name;
+                                            }
+                                            $clientDataAttr = strtolower($clientSafeRaw);
+                                            $createdStr = '';
+                                            if (!empty($demand->created_at)) {
+                                                $cts = strtotime($demand->created_at);
+                                                if ($cts && $cts > 0) {
+                                                    $createdStr = date('d/m/Y', $cts);
+                                                }
+                                            }
+                                        ?>
                                         <tr data-demand-id="<?php echo $demand->id; ?>"
-                                            data-title="<?php echo esc_attr(strtolower($demand->title)); ?>"
-                                            data-client="<?php echo esc_attr(strtolower($demand->client_nickname ?: $demand->client_name)); ?>"
-                                            data-status="<?php echo esc_attr($demand->status); ?>"
+                                            data-title="<?php echo esc_attr(strtolower($titleSafe)); ?>"
+                                            data-client="<?php echo esc_attr($clientDataAttr); ?>"
+                                            data-status="<?php echo esc_attr($statusSafe); ?>"
                                             data-taskrow-id="<?php echo esc_attr($demand->taskrow_id); ?>"
+                                            data-owner="<?php echo esc_attr(strtolower($ownerLoginSafe)); ?>"
+                                            data-created="<?php echo esc_attr($createdStr); ?>"
+                                            data-group="<?php echo esc_attr($group); ?>"
                                             class="demand-row <?php echo $is_overdue ? 'table-danger-subtle' : ''; ?>">
                                             <td class="text-center align-middle">
                                                 <div class="task-id-badge">
@@ -522,11 +595,60 @@ $sent_demands = count(array_filter($demands, function ($d) {
         
         console.log('✅ Script carregado com sucesso! v1.0.2');
 
+        // Preenche o select de Responsável a partir das linhas renderizadas, se vazio
+        const populateOwnerSelect = () => {
+            const $sel = $('#filter-owner');
+            if ($sel.length === 0) return;
+            // já possui opções além de "Todos"? então mantém
+            if ($sel.find('option').length > 1) return;
+            const owners = new Set();
+            $('.demand-row').each(function(){
+                const val = String($(this).data('owner') || '').trim().toLowerCase();
+                if (val) owners.add(val);
+            });
+            const sorted = Array.from(owners).sort();
+            sorted.forEach(v => {
+                const label = v.replace(/[._]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                $sel.append(`<option value="${v}">${label}</option>`);
+            });
+        };
+
+        // Utilitário: parseia a primeira data dd/mm/aaaa presente em uma string
+        const parsePtBrDate = (s) => {
+            if (!s) return null;
+            const m = String(s).match(/(\d{2})\/(\d{2})\/(\d{4})/);
+            if (!m) return null;
+            const d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
+            return isNaN(d.getTime()) ? null : d;
+        };
+
+        const sortVisibleByDueDate = () => {
+            const $tbody = $('#demands-table tbody');
+            const rows = $tbody.find('tr.demand-row:visible').get();
+            rows.sort((a, b) => {
+                const aText = $(a).find('td:eq(5)').text();
+                const bText = $(b).find('td:eq(5)').text();
+                const ad = parsePtBrDate(aText);
+                const bd = parsePtBrDate(bText);
+                const at = ad ? ad.getTime() : Number.POSITIVE_INFINITY;
+                const bt = bd ? bd.getTime() : Number.POSITIVE_INFINITY;
+                if (at === bt) {
+                    const aId = parseInt($(a).data('taskrow-id')) || 0;
+                    const bId = parseInt($(b).data('taskrow-id')) || 0;
+                    return aId - bId; // desempate estável
+                }
+                return at - bt; // ascendente por prazo
+            });
+            $.each(rows, function(_, row) { $tbody.append(row); });
+        };
+
         // Filtros em tempo real
         function filterTable() {
             const searchTerm = $('#search-input').val().toLowerCase();
             const statusFilter = $('#filter-status').val();
             const clientFilter = $('#filter-client').val().toLowerCase();
+            const ownerFilter = ($('#filter-owner').val() || '').toLowerCase();
+            const groupFilter = ($('#filter-group').val() || '').toLowerCase();
             const dateFilter = $('#filter-created-date').val();
 
             const today = new Date();
@@ -545,7 +667,10 @@ $sent_demands = count(array_filter($demands, function ($d) {
                 const client = $row.data('client') || '';
                 const status = $row.data('status') || '';
                 const taskrowId = $row.data('taskrow-id') || '';
-                const createdAtStr = $row.find('td:eq(5)').text().trim();
+                const group = ($row.data('group') || '').toString().toLowerCase();
+                const owner = ($row.data('owner') || '').toString().toLowerCase();
+                let createdAtStr = (($row.data('created') || '').toString()).trim();
+                const dueDateStr = ($row.find('td:eq(5)').text() || '').trim();
 
                 const matchesSearch = !searchTerm ||
                     title.includes(searchTerm) ||
@@ -554,78 +679,71 @@ $sent_demands = count(array_filter($demands, function ($d) {
 
                 const matchesStatus = !statusFilter || status === statusFilter;
                 const matchesClient = !clientFilter || client.includes(clientFilter);
+                const matchesGroup = !groupFilter || group.includes(groupFilter);
+                const matchesOwner = !ownerFilter || owner.includes(ownerFilter);
 
                 let matchesDate = true;
                 
-                if (dateFilter && createdAtStr && createdAtStr !== 'N/A') {
-                    const dateParts = createdAtStr.split('/');
-                    if (dateParts.length === 3) {
-                        try {
-                            const createdDate = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
-                            
-                            // Verificar se a data é válida
-                            if (isNaN(createdDate.getTime())) {
-                                matchesDate = false;
-                            } else {
-                                createdDate.setHours(0, 0, 0, 0);
-
-                                const currentMonth = today.getMonth();
-                                const currentYear = today.getFullYear();
-                                const createdMonth = createdDate.getMonth();
-                                const createdYear = createdDate.getFullYear();
-
-                                switch (dateFilter) {
-                                    case 'last-2-months':
-                                        const twoMonthsAgo = new Date(today);
-                                        twoMonthsAgo.setMonth(today.getMonth() - 2);
-                                        matchesDate = createdDate >= twoMonthsAgo;
-                                        break;
-                                    case 'current-month':
-                                        matchesDate = createdMonth === currentMonth && createdYear === currentYear;
-                                        break;
-                                    case 'last-month':
-                                        const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-                                        const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-                                        matchesDate = createdMonth === lastMonth && createdYear === lastMonthYear;
-                                        break;
-                                    case 'this-week':
-                                        const weekStart = new Date(today);
-                                        weekStart.setDate(today.getDate() - today.getDay());
-                                        const weekEnd = new Date(weekStart);
-                                        weekEnd.setDate(weekStart.getDate() + 6);
-                                        matchesDate = createdDate >= weekStart && createdDate <= weekEnd;
-                                        break;
-                                    case 'last-week':
-                                        const lastWeekStart = new Date(today);
-                                        lastWeekStart.setDate(today.getDate() - today.getDay() - 7);
-                                        const lastWeekEnd = new Date(lastWeekStart);
-                                        lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
-                                        matchesDate = createdDate >= lastWeekStart && createdDate <= lastWeekEnd;
-                                        break;
-                                }
-                                
-                                // Debug: salvar info da row
-                                if (dateFilter === 'last-2-months' && debugInfo.rows.length < 10) {
-                                    debugInfo.rows.push({
-                                        id: taskrowId,
-                                        created: createdAtStr,
-                                        parsed: createdDate.toISOString(),
-                                        matches: matchesDate
-                                    });
-                                }
+                if (dateFilter) {
+                    // Função para verificar se uma data atende ao filtro
+                    const withinFilter = (d) => {
+                        if (!(d instanceof Date) || isNaN(d.getTime())) return false;
+                        d.setHours(0, 0, 0, 0);
+                        const currentMonth = today.getMonth();
+                        const currentYear = today.getFullYear();
+                        switch (dateFilter) {
+                            case 'last-2-months': {
+                                const twoMonthsAgo = new Date(today);
+                                twoMonthsAgo.setMonth(today.getMonth() - 2);
+                                return d >= twoMonthsAgo;
                             }
-                        } catch (e) {
-                            console.error('Erro ao processar data:', createdAtStr, e);
-                            matchesDate = false;
+                            case 'current-month':
+                                return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+                            case 'last-month': {
+                                const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+                                const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+                                return d.getMonth() === lastMonth && d.getFullYear() === lastMonthYear;
+                            }
+                            case 'this-week': {
+                                const weekStart = new Date(today);
+                                weekStart.setDate(today.getDate() - today.getDay());
+                                const weekEnd = new Date(weekStart);
+                                weekEnd.setDate(weekStart.getDate() + 6);
+                                return d >= weekStart && d <= weekEnd;
+                            }
+                            case 'last-week': {
+                                const lastWeekStart = new Date(today);
+                                lastWeekStart.setDate(today.getDate() - today.getDay() - 7);
+                                const lastWeekEnd = new Date(lastWeekStart);
+                                lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
+                                return d >= lastWeekStart && d <= lastWeekEnd;
+                            }
                         }
-                    } else {
-                        matchesDate = false;
+                        return true;
+                    };
+
+                    const createdDate = parsePtBrDate(createdAtStr);
+                    const dueDate = parsePtBrDate(dueDateStr);
+
+                    const createdMatches = createdDate ? withinFilter(createdDate) : false;
+                    const dueMatches = dueDate ? withinFilter(dueDate) : false;
+
+                    // Considerar no período se a criação OU a entrega estiverem no intervalo
+                    matchesDate = createdMatches || dueMatches;
+
+                    if (dateFilter === 'last-2-months' && debugInfo.rows.length < 10) {
+                        debugInfo.rows.push({
+                            id: taskrowId,
+                            created: createdAtStr,
+                            due: dueDateStr,
+                            c_ok: createdMatches,
+                            d_ok: dueMatches,
+                            matches: matchesDate
+                        });
                     }
-                } else if (dateFilter) {
-                    matchesDate = false;
                 }
 
-                if (matchesSearch && matchesStatus && matchesClient && matchesDate) {
+                if (matchesSearch && matchesStatus && matchesClient && matchesGroup && matchesOwner && matchesDate) {
                     $row.show();
                     visibleCount++;
                 } else {
@@ -642,6 +760,9 @@ $sent_demands = count(array_filter($demands, function ($d) {
                 console.log('Visíveis:', visibleCount);
                 console.table(debugInfo.rows.slice(0, 10)); // Primeiras 10 rows
             }
+
+            // Ordena linhas visíveis por prazo (asc) como no Taskrow
+            sortVisibleByDueDate();
 
             $('#showing-count').text(visibleCount);
 
@@ -667,9 +788,25 @@ $sent_demands = count(array_filter($demands, function ($d) {
         $('#search-input').on('keyup', filterTable);
         $('#filter-status').on('change', filterTable);
         $('#filter-client').on('change', filterTable);
+        $('#filter-owner').on('change', filterTable);
         $('#filter-created-date').on('change', filterTable);
+        $('#filter-group').on('change', filterTable);
 
-        // Aplicar filtro de data padrão (últimos 2 meses) ao carregar
+        // Popular owners (caso backend não tenha preenchido)
+        populateOwnerSelect();
+
+        // Defaults ao carregar: Data = últimos 2 meses, Grupo = tech, Responsável = Raissa
+        $('#filter-created-date').val('last-2-months');
+        $('#filter-group').val('tech');
+        const ownerDefault = (function(){
+            let val = '';
+            $('#filter-owner option').each(function(){
+                const v = ($(this).val() || '').toLowerCase();
+                if (!val && v.includes('raissa')) { val = $(this).val(); }
+            });
+            return val;
+        })();
+        if (ownerDefault) { $('#filter-owner').val(ownerDefault); }
         filterTable();
 
         // Limpar filtros
@@ -678,6 +815,16 @@ $sent_demands = count(array_filter($demands, function ($d) {
             $('#filter-status').val('');
             $('#filter-client').val('');
             $('#filter-created-date').val('last-2-months');
+            $('#filter-group').val('tech');
+            const ownerDefault2 = (function(){
+                let val = '';
+                $('#filter-owner option').each(function(){
+                    const v = ($(this).val() || '').toLowerCase();
+                    if (!val && v.includes('raissa')) { val = $(this).val(); }
+                });
+                return val;
+            })();
+            if (ownerDefault2) { $('#filter-owner').val(ownerDefault2); } else { $('#filter-owner').val(''); }
             filterTable();
         });
 
