@@ -1,0 +1,6 @@
+                                <option value="">Todas</option>
+                                <option value="last-2-months" selected>Últimos 2 meses</option>
+                                <option value="current-month">Este mês</option>
+                                <option value="last-month">Mês passado</option>
+                                <option value="this-week">Esta semana</option>
+                                <option value="last-week">Semana passada</option>

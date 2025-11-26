@@ -8,30 +8,44 @@
  * @since 1.0.0
  */
 
-if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+if (!defined('ABSPATH')) {
+    exit;
 }
 
 // Incluir a classe da API Taskrow
 require_once get_template_directory() . '/inc/class-taskrow-api.php';
 
+// Fallback temporário (usado apenas para testes rápidos quando as opções WP não estiverem definidas)
+if (!defined('F2F_TASKROW_FALLBACK_TOKEN')) {
+    define('F2F_TASKROW_FALLBACK_TOKEN', '1e3Y6irpQlLdK6hnk9lbNy6Pz7o3i-TT0td9lBTbmJkuN8pdCsEisH1Fkt3E_B3vHGdeDReHcq6vNUlVTcBtsR4R9KR9dIrj6bpl-3VG37k1');
+}
+if (!defined('F2F_TASKROW_FALLBACK_HOST')) {
+    define('F2F_TASKROW_FALLBACK_HOST', 'f2f.taskrow.com');
+}
+
 /**
  * Cria tabela para armazenar demandas do Taskrow
  */
-function f2f_create_taskrow_demands_table() {
+function f2f_create_taskrow_demands_table()
+{
     global $wpdb;
-    
+
     $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
     $charset_collate = $wpdb->get_charset_collate();
-    
+
     $sql = "CREATE TABLE IF NOT EXISTS {$table_name} (
         id bigint(20) NOT NULL AUTO_INCREMENT,
         taskrow_id varchar(100) NOT NULL,
+        job_number int(11) DEFAULT 0,
+        task_number int(11) DEFAULT 0,
+        client_nickname varchar(255) DEFAULT NULL,
         clickup_id varchar(100) DEFAULT NULL,
+        owner_user_id varchar(20) DEFAULT NULL,
+        owner_user_login varchar(255) DEFAULT NULL,
         title text NOT NULL,
         description longtext DEFAULT NULL,
         client_name varchar(255) DEFAULT NULL,
-        status varchar(50) DEFAULT 'pending',
+        status varchar(50) DEFAULT NULL,
         priority varchar(50) DEFAULT NULL,
         due_date datetime DEFAULT NULL,
         attachments longtext DEFAULT NULL,
@@ -45,467 +59,1565 @@ function f2f_create_taskrow_demands_table() {
         KEY clickup_id (clickup_id),
         KEY status (status)
     ) $charset_collate;";
-    
+
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($sql);
-}
 
-// Cria a tabela na ativação do tema
-add_action('after_switch_theme', 'f2f_create_taskrow_demands_table');
-
-// Cria a tabela no init se ainda não existir
-add_action('init', function() {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
-    
-    if ($wpdb->get_var("SHOW TABLES LIKE '{$table_name}'") != $table_name) {
-        f2f_create_taskrow_demands_table();
+    // Adicionar colunas owner_user_id e owner_user_login se não existirem
+    $column_check = $wpdb->get_results("SHOW COLUMNS FROM {$table_name} LIKE 'owner_user_id'");
+    if (empty($column_check)) {
+        $wpdb->query("ALTER TABLE {$table_name} ADD COLUMN owner_user_id varchar(20) DEFAULT NULL AFTER clickup_id");
+        $wpdb->query("ALTER TABLE {$table_name} ADD COLUMN owner_user_login varchar(255) DEFAULT NULL AFTER owner_user_id");
+        error_log('F2F: Colunas owner_user_id e owner_user_login adicionadas à tabela');
     }
-}, 21);
+}
+add_action('after_setup_theme', 'f2f_create_taskrow_demands_table');
 
 /**
- * Cria automaticamente a página "Demandas Taskrow"
+ * Obter mapa de usuários (UserID => UserLogin) do Taskrow.
+ * Usa cache estático durante a execução para evitar chamadas repetidas
+ * e tenta usar a classe central quando disponível.
+ *
+ * @param string $api_token
+ * @param string $host_name
+ * @return array [ '29116' => 'Raissa Rodrigues', ... ]
  */
-function f2f_create_demandas_taskrow_page() {
-    $existing_page = get_page_by_path('demandas-taskrow');
-    
-    if (!$existing_page) {
-        $page_data = array(
-            'post_title'    => 'Demandas Taskrow',
-            'post_content'  => '<!-- Esta página mostra todas as demandas importadas do Taskrow -->',
-            'post_status'   => 'publish',
-            'post_type'     => 'page',
-            'post_name'     => 'demandas-taskrow',
-            'post_author'   => 1,
-        );
-        
-        $page_id = wp_insert_post($page_data);
-        
-        if ($page_id) {
-            update_post_meta($page_id, '_wp_page_template', 'page-demandas-taskrow.php');
-            update_option('f2f_demandas_taskrow_page_created', true);
+function f2f_taskrow_get_user_map($api_token, $host_name)
+{
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
+
+    // Tenta via classe central se existir
+    if (class_exists('F2F_Taskrow_API')) {
+        $api = F2F_Taskrow_API::get_instance();
+        if ($api->is_configured()) {
+            $resp = $api->get_users();
+            $items = is_array($resp) ? ($resp['items'] ?? $resp) : array();
+            $map = array();
+            if (is_array($items)) {
+                foreach ($items as $u) {
+                    $id = (string)($u['UserID'] ?? $u['userID'] ?? $u['id'] ?? '');
+                    if ($id === '') continue;
+                    $login = $u['UserLogin'] ?? $u['userLogin'] ?? $u['FullName'] ?? $u['fullName'] ?? '';
+                    if ($login === '' && isset($u['MainEmail'])) {
+                        $login = $u['MainEmail'];
+                    }
+                    $map[$id] = $login;
+                }
+            }
+            $cache = $map;
+            return $cache;
         }
     }
-}
 
-add_action('after_switch_theme', 'f2f_create_demandas_taskrow_page');
-
-add_action('init', function() {
-    if (!get_option('f2f_demandas_taskrow_page_created')) {
-        f2f_create_demandas_taskrow_page();
-    }
-}, 22);
-
-/**
- * Cria automaticamente a página "Sincronizar Horas"
- */
-function f2f_create_sincronizar_horas_page() {
-    $existing_page = get_page_by_path('sincronizar-horas');
-    
-    if (!$existing_page) {
-        $page_data = array(
-            'post_title'    => 'Sincronizar Horas',
-            'post_content'  => '<!-- Esta página permite sincronizar horas do ClickUp para o Taskrow -->',
-            'post_status'   => 'publish',
-            'post_type'     => 'page',
-            'post_name'     => 'sincronizar-horas',
-            'post_author'   => 1,
-        );
-        
-        $page_id = wp_insert_post($page_data);
-        
-        if ($page_id) {
-            update_post_meta($page_id, '_wp_page_template', 'page-sincronizar-horas.php');
-            update_option('f2f_sincronizar_horas_page_created', true);
+    // Fallback manual para v1 User/ListUsers
+    $url = 'https://' . $host_name . '/api/v1/User/ListUsers';
+    $response = wp_remote_request($url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 40,
+        'sslverify' => false,
+    ));
+    $map = array();
+    if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) >= 200 && wp_remote_retrieve_response_code($response) < 300) {
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        $items = is_array($data) ? ($data['items'] ?? $data) : array();
+        if (is_array($items)) {
+            foreach ($items as $u) {
+                $id = (string)($u['UserID'] ?? $u['userID'] ?? $u['id'] ?? '');
+                if ($id === '') continue;
+                $login = $u['UserLogin'] ?? $u['userLogin'] ?? $u['FullName'] ?? $u['fullName'] ?? '';
+                if ($login === '' && isset($u['MainEmail'])) {
+                    $login = $u['MainEmail'];
+                }
+                $map[$id] = $login;
+            }
         }
     }
-}
-
-add_action('after_switch_theme', 'f2f_create_sincronizar_horas_page');
-
-add_action('init', function() {
-    if (!get_option('f2f_sincronizar_horas_page_created')) {
-        f2f_create_sincronizar_horas_page();
-    }
-}, 23);
-
-/**
- * Adiciona menu de configurações do Taskrow no admin
- */
-function f2f_taskrow_admin_menu() {
-    add_submenu_page(
-        'f2f-clickup-config',
-        'Configurações Taskrow',
-        'Taskrow',
-        'manage_options',
-        'f2f-taskrow-config',
-        'f2f_taskrow_config_page'
-    );
-}
-add_action('admin_menu', 'f2f_taskrow_admin_menu', 20);
-
-/**
- * Página de configuração do Taskrow no admin
- */
-function f2f_taskrow_config_page() {
-    if (!current_user_can('manage_options')) {
-        return;
-    }
-    
-    // Salvar configurações
-    if (isset($_POST['f2f_taskrow_save'])) {
-        check_admin_referer('f2f_taskrow_config');
-        
-        update_option('f2f_taskrow_api_token', sanitize_text_field($_POST['taskrow_api_token']));
-        
-        // Limpar o host para remover qualquer path ou fragmento
-        $host = sanitize_text_field($_POST['taskrow_host_name']);
-        $host = preg_replace('/^https?:\/\//', '', $host); // Remove http:// ou https://
-        $host = preg_replace('/\/.*$/', '', $host); // Remove qualquer path após /
-        $host = preg_replace('/#.*$/', '', $host); // Remove qualquer fragmento após #
-        
-        update_option('f2f_taskrow_host_name', $host);
-        
-        echo '<div class="notice notice-success"><p>Configurações salvas com sucesso!</p></div>';
-    }
-    
-    $api_token = get_option('f2f_taskrow_api_token', '');
-    $api_host = get_option('f2f_taskrow_host_name', '');
-    
-    ?>
-    <div class="wrap">
-        <h1>⚙️ Configurações Taskrow</h1>
-        
-        <form method="post">
-            <?php wp_nonce_field('f2f_taskrow_config'); ?>
-            
-            <table class="form-table">
-                <tr>
-                    <th scope="row">
-                        <label for="taskrow_host_name">Host do Taskrow</label>
-                    </th>
-                    <td>
-                        <input type="text" 
-                               id="taskrow_host_name" 
-                               name="taskrow_host_name" 
-                               value="<?php echo esc_attr($api_host); ?>" 
-                               class="regular-text" 
-                               placeholder="ex: f2f.taskrow.com">
-                        <p class="description">
-                            Host do servidor Taskrow (apenas o domínio, ex: f2f.taskrow.com)<br>
-                            <strong>Não inclua:</strong> https://, /, # ou qualquer path
-                        </p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">
-                        <label for="taskrow_api_token">API Token</label>
-                    </th>
-                    <td>
-                        <input type="text" 
-                               id="taskrow_api_token" 
-                               name="taskrow_api_token" 
-                               value="<?php echo esc_attr($api_token); ?>" 
-                               class="regular-text" 
-                               placeholder="Cole aqui o token da API do Taskrow">
-                        <p class="description">
-                            Token de autenticação da API do Taskrow. 
-                            <a href="https://f2f.taskrow.com" target="_blank">Obter token</a>
-                        </p>
-                    </td>
-                </tr>
-            </table>
-            
-            <p class="submit">
-                <button type="submit" name="f2f_taskrow_save" class="button button-primary">
-                    Salvar Configurações
-                </button>
-            </p>
-        </form>
-        
-        <hr>
-        
-        <h2>🔗 Links Rápidos</h2>
-        <p>
-            <a href="<?php echo home_url('/demandas-taskrow/'); ?>" class="button" target="_blank">
-                📋 Ver Demandas Taskrow
-            </a>
-            
-            <a href="<?php echo home_url('/sincronizar-horas/'); ?>" class="button" target="_blank">
-                ⏱️ Sincronizar Horas
-            </a>
-        </p>
-    </div>
-    <?php
+    $cache = $map;
+    return $cache;
 }
 
 /**
- * AJAX: Importar demandas do Taskrow
+ * AJAX: Importar demandas do Taskrow (TODAS as tasks)
  */
-function f2f_ajax_import_taskrow_demands() {
+function f2f_ajax_import_taskrow_demands()
+{
     if (!current_user_can('manage_options')) {
         wp_send_json_error('Sem permissão');
     }
-    
-    $api = F2F_Taskrow_API::get_instance();
-    
-    if (!$api->is_configured()) {
+
+    error_log('F2F: Iniciando importação de TODAS as tasks do TaskRow');
+
+    $host_name = get_option('f2f_taskrow_host_name', '');
+    $api_token = get_option('f2f_taskrow_api_token', '');
+
+    if (empty($host_name) || empty($api_token)) {
         wp_send_json_error('API Taskrow não configurada');
     }
-    
-    $demands = $api->get_demands();
-    
-    if (is_wp_error($demands)) {
-        wp_send_json_error($demands->get_error_message());
+
+    // Primeiro, buscar TODOS os projetos disponíveis
+    error_log('F2F: Buscando lista de todos os projetos');
+    $projects_url = 'https://' . $host_name . '/api/v2/core/job/list';
+
+    $projects_response = wp_remote_request($projects_url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 60,
+    ));
+
+    if (is_wp_error($projects_response)) {
+        error_log('F2F: Erro ao buscar projetos: ' . $projects_response->get_error_message());
+        wp_send_json_error('Erro ao buscar projetos: ' . $projects_response->get_error_message());
     }
-    
+
+    $projects_data = json_decode(wp_remote_retrieve_body($projects_response), true);
+    $projects = $projects_data['items'] ?? array();
+
+    error_log('F2F: Total de projetos encontrados: ' . count($projects));
+
     global $wpdb;
     $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
-    $imported = 0;
-    
-    foreach ($demands as $demand) {
-        // Verificar se já existe
-        $existing = $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM {$table_name} WHERE taskrow_id = %s",
-            $demand['id']
-        ));
-        
-        $data = array(
-            'taskrow_id'   => $demand['id'],
-            'title'        => $demand['title'],
-            'description'  => $demand['description'] ?? '',
-            'client_name'  => $demand['client_name'] ?? '',
-            'status'       => 'pending',
-            'priority'     => $demand['priority'] ?? null,
-            'due_date'     => $demand['due_date'] ?? null,
-            'attachments'  => json_encode($demand['attachments'] ?? array()),
-        );
-        
-        if ($existing) {
-            $wpdb->update($table_name, $data, array('id' => $existing));
-        } else {
-            $wpdb->insert($table_name, $data);
-            $imported++;
+
+    $total_imported = 0;
+    $total_updated = 0;
+
+    // Agora buscar tasks de TODOS os projetos e IMPORTAR DIRETO
+    $tasks_url = 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch';
+
+    // Mapa de usuários para resolver ownerUserID -> ownerUserLogin quando necessário
+    $user_map = f2f_taskrow_get_user_map($api_token, $host_name);
+
+    // Para cada projeto, buscar suas tasks com paginação até esgotar
+    foreach ($projects as $index => $project) {
+        $project_id = $project['jobID'] ?? null;
+        $project_title = $project['jobTitle'] ?? 'Sem título';
+
+        // Capturar o clientNickname do PROJETO para aplicar às tasks
+        $project_client_nickname = trim($project['client']['clientNickname'] ?? $project['client']['clientNickName'] ?? $project['client']['displayName'] ?? '');
+
+        if (!$project_id) {
+            continue;
         }
+
+        error_log("F2F: Iniciando paginação do projeto #{$project_id}: {$project_title} (Cliente: {$project_client_nickname}) (" . ($index + 1) . "/" . count($projects) . ")");
+
+        $page_number = 1;
+        $page_size = 500; // tentar maior página para reduzir chamadas (TaskRow padrão é 200)
+        $total_pages_fetched = 0;
+
+        while (true) {
+            $body = array(
+                'JobIDs' => array($project_id),
+                'IncludeClosed' => true,
+                'Pagination' => array(
+                    'PageNumber' => $page_number,
+                    'PageSize' => $page_size,
+                )
+            );
+
+            $tasks_response = wp_remote_request($tasks_url, array(
+                'method' => 'POST',
+                'headers' => array(
+                    '__identifier' => $api_token,
+                    'Content-Type' => 'application/json',
+                ),
+                'body' => json_encode($body),
+                'timeout' => 120,
+            ));
+
+            if (is_wp_error($tasks_response)) {
+                error_log('F2F: Erro na página ' . $page_number . ' do projeto ' . $project_id . ': ' . $tasks_response->get_error_message());
+                break; // parar este projeto
+            }
+
+            $tasks_data = json_decode(wp_remote_retrieve_body($tasks_response), true);
+            $page_tasks = is_array($tasks_data) ? ($tasks_data['data'] ?? $tasks_data) : array();
+
+            if (empty($page_tasks) || !is_array($page_tasks)) {
+                error_log('F2F: Projeto ' . $project_id . ' - página ' . $page_number . ' vazia. Encerrando.');
+                break;
+            }
+
+            error_log('F2F: Projeto ' . $project_id . ' - Página ' . $page_number . ' retornou ' . count($page_tasks) . ' tasks');
+            $total_pages_fetched++;
+
+            // Importar página
+            foreach ($page_tasks as $task) {
+                $task_id = $task['taskID'] ?? $task['TaskID'] ?? null;
+
+                if (!$task_id) {
+                    continue;
+                }
+
+                // Tentar extrair client nickname e display name da própria task
+                $raw_task_client_nick = trim($task['clientNickName'] ?? $task['clientNickname'] ?? '');
+                $raw_task_client_display = trim($task['clientDisplayName'] ?? '');
+
+                // Fallbacks: se não vier nada na task, usar do projeto
+                $task_client_nick = $raw_task_client_nick !== '' ? $raw_task_client_nick : $project_client_nickname;
+                $task_client_display = $raw_task_client_display !== '' ? $raw_task_client_display : ($task_client_nick !== '' ? $task_client_nick : $project_client_nickname);
+
+                $existing = $wpdb->get_var($wpdb->prepare(
+                    "SELECT id FROM {$table_name} WHERE taskrow_id = %s",
+                    $task_id
+                ));
+
+                $owner_id = isset($task['ownerUserID']) ? (string)$task['ownerUserID'] : null;
+                $owner_login = $task['ownerUserLogin'] ?? null;
+                if (!$owner_login && $owner_id && isset($user_map[$owner_id])) {
+                    $owner_login = $user_map[$owner_id];
+                }
+
+                $data = array(
+                    'taskrow_id' => $task_id,
+                    'job_number' => $task['jobNumber'] ?? 0,
+                    'task_number' => $task['taskNumber'] ?? 0,
+                    'client_nickname' => $task_client_nick,
+                    'title' => $task['taskTitle'] ?? $task['title'] ?? 'Sem título',
+                    'description' => $task['taskDescription'] ?? $task['description'] ?? '',
+                    'client_name' => $task_client_display ?: 'Cliente Desconhecido',
+                    'status' => $task['pipelineStep'] ?? null,
+                    'priority' => $task['priority'] ?? $task['Priority'] ?? null,
+                    'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
+                    'created_at' => $task['createdDate'] ?? $task['created_at'] ?? $task['dateCreated'] ?? current_time('mysql'),
+                    'attachments' => json_encode($task['attachments'] ?? array()),
+                    'owner_user_id' => $owner_id,
+                    'owner_user_login' => $owner_login,
+                );
+
+                if ($existing) {
+                    $wpdb->update($table_name, $data, array('id' => $existing));
+                    $total_updated++;
+                } else {
+                    $wpdb->insert($table_name, $data);
+                    $total_imported++;
+                }
+            }
+
+            // Verificar se deve continuar paginando ANTES de liberar memória
+            $should_break = false;
+            if (isset($tasks_data['data']) && is_array($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
+                error_log('F2F: Projeto ' . $project_id . ' - última página alcançada (menos que ' . $page_size . ').');
+                $should_break = true;
+            }
+            if (!isset($tasks_data['data']) && is_array($tasks_data) && (count($tasks_data) < $page_size)) {
+                error_log('F2F: Projeto ' . $project_id . ' - última página (array raiz menor que ' . $page_size . ').');
+                $should_break = true;
+            }
+
+            // Liberar memória da página
+            unset($page_tasks);
+            unset($tasks_data);
+            unset($tasks_response);
+            
+            if ($should_break) {
+                break;
+            }
+
+            $page_number++;
+        }
+
+        error_log('F2F: Projeto ' . $project_id . " concluído. Páginas: {$total_pages_fetched}. Total acumulado: " . ($total_imported + $total_updated));
     }
-    
+
+    error_log("F2F: Importação concluída. {$total_imported} tasks novas, {$total_updated} atualizadas");
+
     wp_send_json_success(array(
-        'message' => "Importadas {$imported} demandas do Taskrow",
-        'total' => count($demands),
+        'message' => "Importadas {$total_imported} tasks novas e {$total_updated} atualizadas",
+        'total' => $total_imported,
+        'updated' => $total_updated,
     ));
 }
 add_action('wp_ajax_f2f_import_taskrow_demands', 'f2f_ajax_import_taskrow_demands');
 
 /**
- * AJAX: Testar conexão com Taskrow
- */
-function f2f_ajax_test_taskrow_connection() {
-    error_log('F2F Taskrow: Teste de conexão iniciado');
-    
-    if (!current_user_can('manage_options')) {
-        error_log('F2F Taskrow: Usuário sem permissão');
-        wp_send_json_error('Sem permissão');
-    }
-    
-    error_log('F2F Taskrow: Verificando configuração da API');
-    $api = F2F_Taskrow_API::get_instance();
-    
-    if (!$api->is_configured()) {
-        error_log('F2F Taskrow: API não configurada');
-        wp_send_json_error('API Taskrow não está configurada. Configure o token e host nas configurações.');
-    }
-    
-    error_log('F2F Taskrow: Testando conexão...');
-    $result = $api->test_connection();
-    
-    if (is_wp_error($result)) {
-        error_log('F2F Taskrow: Erro na conexão: ' . $result->get_error_message());
-        wp_send_json_error($result->get_error_message());
-    }
-    
-    error_log('F2F Taskrow: Conexão bem-sucedida');
-    wp_send_json_success($result);
-}
-add_action('wp_ajax_f2f_test_taskrow_connection', 'f2f_ajax_test_taskrow_connection');
-
-/**
  * AJAX: Apagar todas as demandas do Taskrow
  */
-function f2f_ajax_clear_all_taskrow_demands() {
+function f2f_ajax_clear_all_taskrow_demands()
+{
+    error_log('=== F2F: CLEAR ALL DEMANDS CHAMADO ===');
+
     if (!current_user_can('manage_options')) {
+        error_log('F2F: Usuário sem permissão');
         wp_send_json_error('Sem permissão');
     }
-    
-    error_log('F2F Taskrow: Apagando todas as demandas');
-    
+
+    // Verificar nonce (não é obrigatório para admin, mas vamos validar se presente)
+    if (isset($_POST['nonce']) && !wp_verify_nonce($_POST['nonce'], 'f2f_ajax_nonce')) {
+        error_log('F2F: Nonce inválido ao apagar demandas');
+        wp_send_json_error('Nonce inválido');
+    }
+
+    error_log('F2F Taskrow: Apagando todas as demandas (TRUNCATE)');
+
     global $wpdb;
     $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
-    
-    // Contar quantas demandas existem
+
+    // Contar quantas demandas existem antes
     $count = $wpdb->get_var("SELECT COUNT(*) FROM {$table_name}");
-    
+
     if ($count == 0) {
         wp_send_json_success(array(
             'message' => 'Nenhuma demanda encontrada para apagar.'
         ));
     }
-    
-    // Apagar todas as demandas
-    $deleted = $wpdb->query("DELETE FROM {$table_name}");
-    
-    if ($deleted === false) {
+
+    // Usar TRUNCATE para limpar tudo e resetar IDs
+    $result = $wpdb->query("TRUNCATE TABLE {$table_name}");
+
+    if ($result === false) {
         error_log('F2F Taskrow: Erro ao apagar demandas');
         wp_send_json_error('Erro ao apagar demandas do banco de dados.');
     }
-    
-    error_log("F2F Taskrow: {$deleted} demandas apagadas com sucesso");
-    
+
+    error_log("F2F Taskrow: Tabela truncada com sucesso. Anteriormente tinha {$count} registros.");
+
     wp_send_json_success(array(
-        'message' => "{$deleted} demandas apagadas com sucesso!",
-        'deleted_count' => $deleted
+        'message' => "Todas as demandas ({$count}) foram apagadas com sucesso!",
+        'deleted_count' => $count
     ));
 }
 add_action('wp_ajax_f2f_clear_all_taskrow_demands', 'f2f_ajax_clear_all_taskrow_demands');
 
-/**
- * AJAX: Enviar demanda para ClickUp
- */
-function f2f_ajax_send_demand_to_clickup() {
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Sem permissão');
+// AJAX handler para testar API - Listar Projetos
+function f2f_ajax_test_list_projects()
+{
+    $api_token = get_option('taskrow_api_token');
+    $host_name = get_option('taskrow_host_name');
+    // fallback para testes locais
+    if (empty($api_token)) {
+        $api_token = defined('F2F_TASKROW_FALLBACK_TOKEN') ? F2F_TASKROW_FALLBACK_TOKEN : '';
     }
-    
-    $demand_id = intval($_POST['demand_id']);
-    
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
-    
-    $demand = $wpdb->get_row($wpdb->prepare(
-        "SELECT * FROM {$table_name} WHERE id = %d",
-        $demand_id
-    ), ARRAY_A);
-    
-    if (!$demand) {
-        wp_send_json_error('Demanda não encontrada');
+    if (empty($host_name)) {
+        $host_name = defined('F2F_TASKROW_FALLBACK_HOST') ? F2F_TASKROW_FALLBACK_HOST : '';
     }
-    
-    if ($demand['clickup_id']) {
-        wp_send_json_error('Demanda já foi enviada ao ClickUp');
+
+    if (empty($api_token) || empty($host_name)) {
+        wp_send_json_error('API não configurada');
+        return;
     }
-    
-    // Criar task no ClickUp
-    $clickup_api = F2F_ClickUp_API::get_instance();
-    $list_id = get_option('f2f_clickup_default_list');
-    
-    if (!$list_id) {
-        wp_send_json_error('Lista padrão do ClickUp não configurada');
+
+    $url = 'https://' . $host_name . '/api/v2/core/job/list';
+
+    $response = wp_remote_request($url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 30,
+    ));
+
+    if (is_wp_error($response)) {
+        wp_send_json_error($response->get_error_message());
+        return;
     }
-    
-    $task_data = array(
-        'name'        => $demand['title'],
-        'description' => $demand['description'],
-        'priority'    => $demand['priority'],
-    );
-    
-    if ( ! empty( $demand['due_date'] ) ) {
-        $timestamp = strtotime( $demand['due_date'] );
-        if ( $timestamp !== false && $timestamp > 0 ) {
-            $task_data['due_date'] = $timestamp * 1000;
-        } else {
-            error_log( "F2F Taskrow Integration: Data de vencimento inválida: " . $demand['due_date'] );
-            // Não adiciona data inválida
+
+    $body = wp_remote_retrieve_body($response);
+    $data = json_decode($body, true);
+
+    wp_send_json_success($data);
+}
+add_action('wp_ajax_f2f_test_list_projects', 'f2f_ajax_test_list_projects');
+add_action('wp_ajax_nopriv_f2f_test_list_projects', 'f2f_ajax_test_list_projects');
+// AJAX handler para testar API - Listar Usuários
+function f2f_ajax_test_list_users()
+{
+    // Usar classe central quando possível para manter consistência
+    if (class_exists('F2F_Taskrow_API')) {
+        $api = F2F_Taskrow_API::get_instance();
+        if ($api->is_configured()) {
+            $result = $api->get_users();
+            if (is_wp_error($result)) {
+                wp_send_json_error($result->get_error_message());
+                return;
+            }
+            wp_send_json_success($result);
+            return;
         }
     }
-    
-    $result = $clickup_api->create_task($list_id, $task_data);
-    
-    if (is_wp_error($result)) {
-        wp_send_json_error($result->get_error_message());
+
+    // Fallback manual caso a classe ainda não esteja configurada
+    $api_token = get_option('taskrow_api_token');
+    $host_name = get_option('taskrow_host_name');
+    if (empty($api_token)) {
+        $api_token = get_option('f2f_taskrow_api_token');
     }
-    
-    // Atualizar demanda com ID do ClickUp
-    $wpdb->update(
-        $table_name,
-        array(
-            'clickup_id' => $result['id'],
-            'status'     => 'sent_to_clickup',
+    if (empty($host_name)) {
+        $host_name = get_option('f2f_taskrow_host_name');
+    }
+    if (empty($api_token)) {
+        $api_token = defined('F2F_TASKROW_FALLBACK_TOKEN') ? F2F_TASKROW_FALLBACK_TOKEN : '';
+    }
+    if (empty($host_name)) {
+        $host_name = defined('F2F_TASKROW_FALLBACK_HOST') ? F2F_TASKROW_FALLBACK_HOST : '';
+    }
+
+    if (empty($api_token) || empty($host_name)) {
+        wp_send_json_error('API não configurada (token/host ausentes)');
+        return;
+    }
+
+    $url = 'https://' . $host_name . '/api/v1/User/ListUsers';
+    error_log('F2F: Tentando listar usuários via endpoint v1: ' . $url);
+
+    $response = wp_remote_request($url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
         ),
-        array('id' => $demand_id)
+        'timeout' => 40,
+        'sslverify' => false,
+    ));
+
+    if (is_wp_error($response)) {
+        error_log('F2F: Erro ao listar usuários - ' . $response->get_error_message());
+        wp_send_json_error($response->get_error_message());
+        return;
+    }
+
+    $code = wp_remote_retrieve_response_code($response);
+    $body = wp_remote_retrieve_body($response);
+    if ($code < 200 || $code >= 300) {
+        error_log('F2F: Falha listar usuários - HTTP ' . $code . ' Body: ' . $body);
+        wp_send_json_error('Falha listar usuários. HTTP ' . $code);
+        return;
+    }
+
+    $data = json_decode($body, true);
+    if ($data === null) {
+        error_log('F2F: JSON inválido em ListUsers: ' . $body);
+        wp_send_json_error('Resposta inválida da API (JSON)');
+        return;
+    }
+
+    wp_send_json_success($data);
+}
+add_action('wp_ajax_f2f_test_list_users', 'f2f_ajax_test_list_users');
+add_action('wp_ajax_nopriv_f2f_test_list_users', 'f2f_ajax_test_list_users');
+
+// AJAX handler para listar clientes
+function f2f_ajax_test_list_clients()
+{
+    if (class_exists('F2F_Taskrow_API')) {
+        $api = F2F_Taskrow_API::get_instance();
+        if ($api->is_configured()) {
+            $result = $api->get_clients();
+            if (is_wp_error($result)) {
+                wp_send_json_error($result->get_error_message());
+                return;
+            }
+            wp_send_json_success($result);
+            return;
+        }
+    }
+    $api_token = get_option('taskrow_api_token') ?: get_option('f2f_taskrow_api_token');
+    $host_name = get_option('taskrow_host_name') ?: get_option('f2f_taskrow_host_name');
+    if (empty($api_token)) {
+        $api_token = defined('F2F_TASKROW_FALLBACK_TOKEN') ? F2F_TASKROW_FALLBACK_TOKEN : '';
+    }
+    if (empty($host_name)) {
+        $host_name = defined('F2F_TASKROW_FALLBACK_HOST') ? F2F_TASKROW_FALLBACK_HOST : '';
+    }
+    if (empty($api_token) || empty($host_name)) {
+        wp_send_json_error('API não configurada (token/host ausentes)');
+        return;
+    }
+    $url = 'https://' . $host_name . '/api/v1/Client/ListClients';
+    error_log('F2F: Tentando listar clientes via endpoint v1: ' . $url);
+    $response = wp_remote_request($url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 40,
+        'sslverify' => false,
+    ));
+    if (is_wp_error($response)) {
+        error_log('F2F: Erro ao listar clientes - ' . $response->get_error_message());
+        wp_send_json_error($response->get_error_message());
+        return;
+    }
+    $code = wp_remote_retrieve_response_code($response);
+    $body = wp_remote_retrieve_body($response);
+    if ($code < 200 || $code >= 300) {
+        error_log('F2F: Falha listar clientes - HTTP ' . $code . ' Body: ' . $body);
+        wp_send_json_error('Falha listar clientes. HTTP ' . $code);
+        return;
+    }
+    $data = json_decode($body, true);
+    if ($data === null) {
+        error_log('F2F: JSON inválido em ListClients: ' . $body);
+        wp_send_json_error('Resposta inválida da API (JSON)');
+        return;
+    }
+    wp_send_json_success($data);
+}
+add_action('wp_ajax_f2f_test_list_clients', 'f2f_ajax_test_list_clients');
+add_action('wp_ajax_nopriv_f2f_test_list_clients', 'f2f_ajax_test_list_clients');
+
+// AJAX: Itens pendentes (Clients, Jobs, Tasks) de um usuário específico
+function f2f_ajax_get_user_pending_entities()
+{
+    $user_id = isset($_POST['user_id']) ? intval($_POST['user_id']) : 0;
+    if ($user_id <= 0) {
+        wp_send_json_error('user_id inválido');
+    }
+
+    // Verificar se o usuário existe antes de tentar endpoints pendentes
+    $list_users_url = 'https://' . (get_option('f2f_taskrow_host_name', get_option('taskrow_host_name')) ?: (defined('F2F_TASKROW_FALLBACK_HOST') ? F2F_TASKROW_FALLBACK_HOST : '')) . '/api/v1/User/ListUsers';
+    $token_check = get_option('f2f_taskrow_api_token', get_option('taskrow_api_token')) ?: (defined('F2F_TASKROW_FALLBACK_TOKEN') ? F2F_TASKROW_FALLBACK_TOKEN : '');
+    if ($token_check) {
+        $u_resp = wp_remote_request($list_users_url, array(
+            'method' => 'GET',
+            'headers' => array('__identifier' => $token_check, 'Content-Type' => 'application/json'),
+            'timeout' => 25,
+            'sslverify' => false,
+        ));
+        if (!is_wp_error($u_resp)) {
+            $u_body = wp_remote_retrieve_body($u_resp);
+            $u_json = json_decode($u_body, true);
+            $found = false;
+            if (is_array($u_json)) {
+                $items = $u_json['items'] ?? $u_json;
+                if (is_array($items)) {
+                    foreach ($items as $usr) {
+                        $idCandidate = $usr['UserID'] ?? $usr['userID'] ?? $usr['id'] ?? null;
+                        if ($idCandidate == $user_id) {
+                            $found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!$found) {
+                error_log('F2F: UserID ' . $user_id . ' não encontrado em ListUsers antes de tentar pending entities');
+            } else {
+                error_log('F2F: UserID ' . $user_id . ' confirmado em ListUsers');
+            }
+        }
+    }
+
+    // Priorizar classe central
+    if (class_exists('F2F_Taskrow_API')) {
+        $api = F2F_Taskrow_API::get_instance();
+        if (!$api->is_configured()) {
+            // fallback manual abaixo
+        } else {
+            // Tentar múltiplas variações do endpoint
+            $token = get_option('f2f_taskrow_api_token');
+            $host = get_option('f2f_taskrow_host_name');
+            $attempts = array(
+                array('method' => 'GET', 'url' => 'https://' . $host . '/api/v1/User/GetUserPendingEntities?userID=' . $user_id, 'body' => null, 'label' => 'GET query param'),
+                array('method' => 'GET', 'url' => 'https://' . $host . '/api/v1/User/GetUserPendingEntities/' . $user_id, 'body' => null, 'label' => 'GET path param'),
+            );
+            $errors = array();
+            foreach ($attempts as $a) {
+                error_log('F2F: Tentativa GetUserPendingEntities [' . $a['label'] . '] URL=' . $a['url']);
+                $args = array(
+                    'method' => $a['method'],
+                    'headers' => array(
+                        '__identifier' => $token,
+                        'Content-Type' => 'application/json',
+                    ),
+                    'timeout' => 45,
+                    'sslverify' => false,
+                );
+                if ($a['method'] === 'POST') {
+                    $args['body'] = json_encode($a['body']);
+                }
+                $response = wp_remote_request($a['url'], $args);
+                if (is_wp_error($response)) {
+                    $errors[] = $a['label'] . ': WP_Error ' . $response->get_error_message();
+                    continue;
+                }
+                $code = wp_remote_retrieve_response_code($response);
+                $body = wp_remote_retrieve_body($response);
+                if ($code < 200 || $code >= 300) {
+                    $errors[] = $a['label'] . ': HTTP ' . $code . ' Body=' . substr($body, 0, 200);
+                    continue;
+                }
+                $data = json_decode($body, true);
+                if ($data === null) {
+                    $errors[] = $a['label'] . ': JSON inválido Body=' . substr($body, 0, 200);
+                    continue;
+                }
+                $data['_attempt'] = $a['label'];
+                wp_send_json_success($data);
+                return;
+            }
+            wp_send_json_error('Todas as tentativas falharam: ' . implode(' | ', $errors));
+            return;
+        }
+    }
+
+    // Fallback manual
+    $api_token = get_option('taskrow_api_token') ?: get_option('f2f_taskrow_api_token');
+    $host_name = get_option('taskrow_host_name') ?: get_option('f2f_taskrow_host_name');
+    if (empty($api_token)) {
+        $api_token = defined('F2F_TASKROW_FALLBACK_TOKEN') ? F2F_TASKROW_FALLBACK_TOKEN : '';
+    }
+    if (empty($host_name)) {
+        $host_name = defined('F2F_TASKROW_FALLBACK_HOST') ? F2F_TASKROW_FALLBACK_HOST : '';
+    }
+    if (empty($api_token) || empty($host_name)) {
+        wp_send_json_error('API não configurada');
+    }
+
+    // Fallback manual com as mesmas tentativas
+    $attempts = array(
+        array('method' => 'GET', 'url' => 'https://' . $host_name . '/api/v1/User/GetUserPendingEntities?userID=' . $user_id, 'body' => null, 'label' => 'GET query param'),
+        array('method' => 'GET', 'url' => 'https://' . $host_name . '/api/v1/User/GetUserPendingEntities/' . $user_id, 'body' => null, 'label' => 'GET path param'),
     );
-    
+    $errors = array();
+    foreach ($attempts as $a) {
+        error_log('F2F: Fallback tentativa GetUserPendingEntities [' . $a['label'] . '] URL=' . $a['url']);
+        $args = array(
+            'method' => $a['method'],
+            'headers' => array(
+                '__identifier' => $api_token,
+                'Content-Type' => 'application/json',
+            ),
+            'timeout' => 45,
+            'sslverify' => false,
+        );
+        if ($a['method'] === 'POST') {
+            $args['body'] = json_encode($a['body']);
+        }
+        $response = wp_remote_request($a['url'], $args);
+        if (is_wp_error($response)) {
+            $errors[] = $a['label'] . ': WP_Error ' . $response->get_error_message();
+            continue;
+        }
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        if ($code < 200 || $code >= 300) {
+            $errors[] = $a['label'] . ': HTTP ' . $code . ' Body=' . substr($body, 0, 200);
+            continue;
+        }
+        $data = json_decode($body, true);
+        if ($data === null) {
+            $errors[] = $a['label'] . ': JSON inválido Body=' . substr($body, 0, 200);
+            continue;
+        }
+        $data['_attempt'] = $a['label'];
+        wp_send_json_success($data);
+        return;
+    }
+    wp_send_json_error('Todas as tentativas falharam: ' . implode(' | ', $errors));
+}
+add_action('wp_ajax_f2f_get_user_pending_entities', 'f2f_ajax_get_user_pending_entities');
+add_action('wp_ajax_nopriv_f2f_get_user_pending_entities', 'f2f_ajax_get_user_pending_entities');
+
+// AJAX: Buscar task específica por TaskID para inspeção
+function f2f_ajax_get_task_by_id()
+{
+    $task_id = isset($_POST['task_id']) ? intval($_POST['task_id']) : 0;
+    if ($task_id <= 0) {
+        wp_send_json_error('task_id inválido');
+    }
+    $api_token = get_option('taskrow_api_token') ?: get_option('f2f_taskrow_api_token');
+    $host_name = get_option('taskrow_host_name') ?: get_option('f2f_taskrow_host_name');
+    if (empty($api_token)) {
+        $api_token = defined('F2F_TASKROW_FALLBACK_TOKEN') ? F2F_TASKROW_FALLBACK_TOKEN : '';
+    }
+    if (empty($host_name)) {
+        $host_name = defined('F2F_TASKROW_FALLBACK_HOST') ? F2F_TASKROW_FALLBACK_HOST : '';
+    }
+    if (empty($api_token) || empty($host_name)) {
+        wp_send_json_error('API não configurada');
+    }
+
+    // Tentar múltiplos endpoints para encontrar dados de responsável
+    $endpoints_to_try = array();
+
+    // 1. GET direto da task (pode existir endpoint /api/v1/Task/Get ou similar)
+    $endpoints_to_try[] = array(
+        'name' => 'GET Task Direct v1',
+        'url' => 'https://' . $host_name . '/api/v1/Task/Get?taskID=' . $task_id,
+        'method' => 'GET',
+        'body' => null
+    );
+
+    // 2. GET v2 task
+    $endpoints_to_try[] = array(
+        'name' => 'GET Task Direct v2',
+        'url' => 'https://' . $host_name . '/api/v2/Task/Get?taskID=' . $task_id,
+        'method' => 'GET',
+        'body' => null
+    );
+
+    // 3. Busca avançada (atual)
+    $endpoints_to_try[] = array(
+        'name' => 'POST AdvancedSearch',
+        'url' => 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch',
+        'method' => 'POST',
+        'body' => json_encode(array(
+            'TaskIDs' => array($task_id),
+            'IncludeClosed' => true,
+            'Pagination' => array('PageNumber' => 1, 'PageSize' => 1)
+        ))
+    );
+
+    $results = array();
+
+    foreach ($endpoints_to_try as $endpoint) {
+        $args = array(
+            'method' => $endpoint['method'],
+            'headers' => array('__identifier' => $api_token),
+            'timeout' => 40,
+            'sslverify' => false,
+        );
+
+        if ($endpoint['method'] === 'POST' && $endpoint['body']) {
+            $args['headers']['Content-Type'] = 'application/json';
+            $args['body'] = $endpoint['body'];
+        }
+
+        $response = wp_remote_request($endpoint['url'], $args);
+        $code = is_wp_error($response) ? 0 : wp_remote_retrieve_response_code($response);
+        $body = is_wp_error($response) ? $response->get_error_message() : wp_remote_retrieve_body($response);
+
+        $result_entry = array(
+            'endpoint' => $endpoint['name'],
+            'url' => $endpoint['url'],
+            'http_code' => $code,
+            'success' => ($code >= 200 && $code < 300)
+        );
+
+        if ($result_entry['success']) {
+            $decoded = json_decode($body, true);
+            $result_entry['data'] = $decoded;
+            // Tentar encontrar campos de usuário responsável
+            $result_entry['user_fields_found'] = f2f_extract_user_fields_from_task($decoded);
+        } else {
+            $result_entry['error'] = substr($body, 0, 200);
+        }
+
+        $results[] = $result_entry;
+    }
+
     wp_send_json_success(array(
-        'message' => 'Demanda enviada ao ClickUp com sucesso!',
-        'clickup_url' => $result['url'],
+        'task_id' => $task_id,
+        'attempts' => $results
     ));
 }
-add_action('wp_ajax_f2f_send_demand_to_clickup', 'f2f_ajax_send_demand_to_clickup');
+
+// Helper: extrair todos os campos relacionados a usuários de uma task
+function f2f_extract_user_fields_from_task($data)
+{
+    $user_fields = array();
+
+    // Se for array de items, pega primeiro
+    if (isset($data['items']) && is_array($data['items']) && count($data['items']) > 0) {
+        $task = $data['items'][0];
+    } else {
+        $task = $data;
+    }
+
+    // Buscar RECURSIVAMENTE qualquer campo que contenha "user", "owner", "responsible", "assigned", "participant"
+    // ou que contenha o UserID 29116 (Raissa)
+    $search_terms = array('user', 'owner', 'responsible', 'assigned', 'participant', 'creator', 'modifier', '29116');
+
+    function search_recursive($array, $search_terms, $parent_key = '')
+    {
+        $found = array();
+
+        if (!is_array($array)) {
+            return $found;
+        }
+
+        foreach ($array as $key => $value) {
+            $full_key = $parent_key ? $parent_key . '.' . $key : $key;
+            $key_lower = strtolower($key);
+
+            // Verificar se a chave contém algum termo de busca
+            $matches_key = false;
+            foreach ($search_terms as $term) {
+                if (stripos($key_lower, strtolower($term)) !== false) {
+                    $matches_key = true;
+                    break;
+                }
+            }
+
+            // Verificar se o valor contém algum termo de busca (se for string/number)
+            $matches_value = false;
+            if (is_scalar($value)) {
+                $value_str = (string) $value;
+                foreach ($search_terms as $term) {
+                    if (stripos($value_str, $term) !== false) {
+                        $matches_value = true;
+                        break;
+                    }
+                }
+            }
+
+            if ($matches_key || $matches_value) {
+                $found[$full_key] = $value;
+            }
+
+            // Recursão para arrays/objetos aninhados
+            if (is_array($value)) {
+                $nested = search_recursive($value, $search_terms, $full_key);
+                $found = array_merge($found, $nested);
+            }
+        }
+
+        return $found;
+    }
+
+    $user_fields = search_recursive($task, $search_terms);
+
+    return $user_fields;
+}
+add_action('wp_ajax_f2f_get_task_by_id', 'f2f_ajax_get_task_by_id');
+add_action('wp_ajax_nopriv_f2f_get_task_by_id', 'f2f_ajax_get_task_by_id');
+
+// AJAX: Buscar tasks filtrando por ownerUserID
+function f2f_ajax_get_tasks_by_owner()
+{
+    $owner_user_id = isset($_POST['owner_user_id']) ? intval($_POST['owner_user_id']) : 0;
+    if ($owner_user_id <= 0) {
+        wp_send_json_error('owner_user_id inválido');
+    }
+
+    $api_token = get_option('taskrow_api_token') ?: get_option('f2f_taskrow_api_token');
+    $host_name = get_option('taskrow_host_name') ?: get_option('f2f_taskrow_host_name');
+    if (empty($api_token)) {
+        $api_token = defined('F2F_TASKROW_FALLBACK_TOKEN') ? F2F_TASKROW_FALLBACK_TOKEN : '';
+    }
+    if (empty($host_name)) {
+        $host_name = defined('F2F_TASKROW_FALLBACK_HOST') ? F2F_TASKROW_FALLBACK_HOST : '';
+    }
+    if (empty($api_token) || empty($host_name)) {
+        wp_send_json_error('API não configurada');
+    }
+
+    // Buscar TODAS as tasks e filtrar por ownerUserID no PHP (API pode não ter filtro direto)
+    $url = 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch';
+    $page = 1;
+    $page_size = 200;
+    $matched_tasks = array();
+
+    do {
+        $body = array(
+            'IncludeClosed' => true,
+            'Pagination' => array('PageNumber' => $page, 'PageSize' => $page_size)
+        );
+
+        $response = wp_remote_request($url, array(
+            'method' => 'POST',
+            'headers' => array('__identifier' => $api_token, 'Content-Type' => 'application/json'),
+            'body' => json_encode($body),
+            'timeout' => 40,
+            'sslverify' => false,
+        ));
+
+        if (is_wp_error($response)) {
+            wp_send_json_error($response->get_error_message());
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code < 200 || $code >= 300) {
+            wp_send_json_error('HTTP ' . $code);
+        }
+
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        $items = $data['items'] ?? array();
+
+        // Filtrar tasks onde ownerUserID == $owner_user_id
+        foreach ($items as $task) {
+            if (isset($task['ownerUserID']) && intval($task['ownerUserID']) === $owner_user_id) {
+                $matched_tasks[] = array(
+                    'taskID' => $task['taskID'] ?? 'N/A',
+                    'taskTitle' => $task['taskTitle'] ?? 'N/A',
+                    'jobNumber' => $task['jobNumber'] ?? 'N/A',
+                    'pipelineStep' => $task['pipelineStep'] ?? 'N/A',
+                    'clientNickName' => $task['clientNickName'] ?? $task['clientNickname'] ?? 'N/A',
+                    'ownerUserID' => $task['ownerUserID'],
+                    'ownerUserLogin' => $task['ownerUserLogin'] ?? 'N/A'
+                );
+            }
+        }
+
+        $has_more = count($items) === $page_size;
+        $page++;
+
+        // Limite de segurança: máximo 5 páginas (1000 tasks)
+        if ($page > 5)
+            break;
+
+    } while ($has_more);
+
+    wp_send_json_success(array(
+        'owner_user_id' => $owner_user_id,
+        'total_found' => count($matched_tasks),
+        'tasks' => $matched_tasks
+    ));
+}
+add_action('wp_ajax_f2f_get_tasks_by_owner', 'f2f_ajax_get_tasks_by_owner');
+add_action('wp_ajax_nopriv_f2f_get_tasks_by_owner', 'f2f_ajax_get_tasks_by_owner');
+
+
+// AJAX handler para testar API - Buscar Tasks
+function f2f_ajax_test_search_tasks()
+{
+    $api_token = get_option('taskrow_api_token');
+    $host_name = get_option('taskrow_host_name');
+    // fallback para testes locais
+    if (empty($api_token)) {
+        $api_token = defined('F2F_TASKROW_FALLBACK_TOKEN') ? F2F_TASKROW_FALLBACK_TOKEN : '';
+    }
+    if (empty($host_name)) {
+        $host_name = defined('F2F_TASKROW_FALLBACK_HOST') ? F2F_TASKROW_FALLBACK_HOST : '';
+    }
+    $project_id = isset($_POST['project_id']) ? intval($_POST['project_id']) : 0;
+
+    if (empty($api_token) || empty($host_name)) {
+        wp_send_json_error('API não configurada');
+        return;
+    }
+
+    if (empty($project_id)) {
+        wp_send_json_error('ID do projeto é obrigatório');
+        return;
+    }
+
+    $url = 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch';
+
+    $body = array(
+        'JobIDs' => array($project_id),
+        'IncludeClosed' => true,
+        'Pagination' => array(
+            'PageNumber' => 1,
+            'PageSize' => 10
+        )
+    );
+
+    $response = wp_remote_request($url, array(
+        'method' => 'POST',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'body' => json_encode($body),
+        'timeout' => 30,
+    ));
+
+    if (is_wp_error($response)) {
+        wp_send_json_error($response->get_error_message());
+        return;
+    }
+
+    $response_body = wp_remote_retrieve_body($response);
+    $data = json_decode($response_body, true);
+
+    wp_send_json_success($data);
+}
+add_action('wp_ajax_f2f_test_search_tasks', 'f2f_ajax_test_search_tasks');
+add_action('wp_ajax_nopriv_f2f_test_search_tasks', 'f2f_ajax_test_search_tasks');
 
 /**
- * AJAX: Sincronizar horas do ClickUp para Taskrow
+ * AJAX: Salvar credenciais do TaskRow (token + host)
  */
-function f2f_ajax_sync_hours_to_taskrow() {
+function f2f_ajax_save_taskrow_credentials()
+{
+    // Verifica permissão e nonce
     if (!current_user_can('manage_options')) {
         wp_send_json_error('Sem permissão');
     }
-    
-    $demand_id = intval($_POST['demand_id']);
-    
+
+    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'f2f_save_taskrow_nonce')) {
+        wp_send_json_error('Nonce inválido');
+    }
+
+    $token = isset($_POST['token']) ? sanitize_text_field($_POST['token']) : '';
+    $host = isset($_POST['host']) ? sanitize_text_field($_POST['host']) : '';
+
+    if (empty($token) || empty($host)) {
+        wp_send_json_error('Token e host são obrigatórios');
+    }
+
+    // Salvar em ambas chaves para compatibilidade com código existente
+    update_option('taskrow_api_token', $token);
+    update_option('taskrow_host_name', $host);
+    update_option('f2f_taskrow_api_token', $token);
+    update_option('f2f_taskrow_host_name', $host);
+
+    error_log('F2F: Credenciais TaskRow salvas via AJAX (usuário ID: ' . get_current_user_id() . ')');
+
+    wp_send_json_success('Credenciais salvas');
+}
+add_action('wp_ajax_f2f_save_taskrow_credentials', 'f2f_ajax_save_taskrow_credentials');
+
+/**
+ * AJAX: Importar demandas de UM projeto específico (Incremental)
+ */
+function f2f_ajax_import_single_project()
+{
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Sem permissão');
+    }
+
+    $project_id = isset($_POST['project_id']) ? intval($_POST['project_id']) : 0;
+    $project_title = isset($_POST['project_title']) ? sanitize_text_field($_POST['project_title']) : 'Sem título';
+    $project_client_nickname = isset($_POST['client_nickname']) ? sanitize_text_field($_POST['client_nickname']) : '';
+
+    if (!$project_id) {
+        wp_send_json_error('ID do projeto inválido');
+    }
+
+    $host_name = get_option('f2f_taskrow_host_name', '');
+    $api_token = get_option('f2f_taskrow_api_token', '');
+
+    if (empty($host_name) || empty($api_token)) {
+        wp_send_json_error('API Taskrow não configurada');
+    }
+
     global $wpdb;
     $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
-    
-    $demand = $wpdb->get_row($wpdb->prepare(
-        "SELECT * FROM {$table_name} WHERE id = %d",
-        $demand_id
-    ), ARRAY_A);
-    
-    if (!$demand || !$demand['clickup_id']) {
-        wp_send_json_error('Demanda não encontrada ou não vinculada ao ClickUp');
+
+    $total_imported = 0;
+    $total_updated = 0;
+
+    $tasks_url = 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch';
+    // Mapa de usuários para resolver ownerUserID -> ownerUserLogin quando faltante
+    $user_map = f2f_taskrow_get_user_map($api_token, $host_name);
+
+    error_log("F2F: Iniciando importação do projeto #{$project_id}: {$project_title}");
+
+    $page_number = 1;
+    $page_size = 500;
+    $total_pages_fetched = 0;
+
+    while (true) {
+        $body = array(
+            'JobIDs' => array($project_id),
+            'IncludeClosed' => true,
+            'Pagination' => array(
+                'PageNumber' => $page_number,
+                'PageSize' => $page_size,
+            )
+        );
+
+        $tasks_response = wp_remote_request($tasks_url, array(
+            'method' => 'POST',
+            'headers' => array(
+                '__identifier' => $api_token,
+                'Content-Type' => 'application/json',
+            ),
+            'body' => json_encode($body),
+            'timeout' => 60, // Timeout menor pois é por projeto
+        ));
+
+        if (is_wp_error($tasks_response)) {
+            error_log('F2F: Erro na página ' . $page_number . ' do projeto ' . $project_id . ': ' . $tasks_response->get_error_message());
+            break;
+        }
+
+        $tasks_data = json_decode(wp_remote_retrieve_body($tasks_response), true);
+        $page_tasks = is_array($tasks_data) ? ($tasks_data['data'] ?? $tasks_data) : array();
+
+        if (empty($page_tasks) || !is_array($page_tasks)) {
+            break;
+        }
+
+        $total_pages_fetched++;
+
+        foreach ($page_tasks as $task) {
+            $task_id = $task['taskID'] ?? $task['TaskID'] ?? null;
+
+            if (!$task_id) {
+                continue;
+            }
+
+            $raw_task_client_nick = trim($task['clientNickName'] ?? $task['clientNickname'] ?? '');
+            $raw_task_client_display = trim($task['clientDisplayName'] ?? '');
+
+            $task_client_nick = $raw_task_client_nick !== '' ? $raw_task_client_nick : $project_client_nickname;
+            $task_client_display = $raw_task_client_display !== '' ? $raw_task_client_display : ($task_client_nick !== '' ? $task_client_nick : $project_client_nickname);
+
+            $existing = $wpdb->get_var($wpdb->prepare(
+                "SELECT id FROM {$table_name} WHERE taskrow_id = %s",
+                $task_id
+            ));
+
+            $owner_id = isset($task['ownerUserID']) ? (string)$task['ownerUserID'] : null;
+            $owner_login = $task['ownerUserLogin'] ?? null;
+            if (!$owner_login && $owner_id && isset($user_map[$owner_id])) {
+                $owner_login = $user_map[$owner_id];
+            }
+
+            $data = array(
+                'taskrow_id' => $task_id,
+                'job_number' => $task['jobNumber'] ?? 0,
+                'task_number' => $task['taskNumber'] ?? 0,
+                'client_nickname' => $task_client_nick,
+                'title' => $task['taskTitle'] ?? $task['title'] ?? 'Sem título',
+                'description' => $task['taskDescription'] ?? $task['description'] ?? '',
+                'client_name' => $task_client_display ?: 'Cliente Desconhecido',
+                'status' => $task['pipelineStep'] ?? null,
+                'priority' => $task['priority'] ?? $task['Priority'] ?? null,
+                'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
+                'created_at' => $task['createdDate'] ?? $task['created_at'] ?? $task['dateCreated'] ?? current_time('mysql'),
+                'attachments' => json_encode($task['attachments'] ?? array()),
+                'owner_user_id' => $owner_id,
+                'owner_user_login' => $owner_login,
+            );
+
+            if ($existing) {
+                $wpdb->update($table_name, $data, array('id' => $existing));
+                $total_updated++;
+            } else {
+                $wpdb->insert($table_name, $data);
+                $total_imported++;
+            }
+        }
+
+        // Se retornou menos que page_size, acabou (verificar ANTES de liberar memória)
+        $should_break = false;
+        if (isset($tasks_data['data']) && is_array($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
+            $should_break = true;
+        }
+        if (!isset($tasks_data['data']) && is_array($tasks_data) && (count($tasks_data) < $page_size)) {
+            $should_break = true;
+        }
+
+        // Liberar memória
+        unset($page_tasks);
+        unset($tasks_data);
+
+        if ($should_break) {
+            break;
+        }
+
+        $page_number++;
     }
-    
-    // Buscar horas no ClickUp
-    $clickup_api = F2F_ClickUp_API::get_instance();
-    $time_entries = $clickup_api->get_task_time_entries($demand['clickup_id']);
-    
-    if (is_wp_error($time_entries)) {
-        wp_send_json_error($time_entries->get_error_message());
-    }
-    
-    // Calcular total de horas
-    $total_hours = 0;
-    foreach ($time_entries as $entry) {
-        $total_hours += ($entry['duration'] / 1000 / 60 / 60); // ms para horas
-    }
-    
-    // Enviar para Taskrow
-    $taskrow_api = F2F_Taskrow_API::get_instance();
-    $result = $taskrow_api->save_time_entry(
-        $demand['taskrow_id'],
-        $total_hours,
-        array(
-            'description' => 'Horas sincronizadas do ClickUp',
-            'date' => date('Y-m-d'),
-        )
-    );
-    
-    if (is_wp_error($result)) {
-        wp_send_json_error($result->get_error_message());
-    }
-    
-    // Atualizar registro
-    $wpdb->update(
-        $table_name,
-        array(
-            'hours_tracked' => $total_hours,
-            'hours_synced'  => 1,
-            'last_sync'     => current_time('mysql'),
-        ),
-        array('id' => $demand_id)
-    );
-    
+
     wp_send_json_success(array(
-        'message' => 'Horas sincronizadas com sucesso!',
-        'hours' => round($total_hours, 2),
+        'message' => "Projeto {$project_id} processado.",
+        'imported' => $total_imported,
+        'updated' => $total_updated,
+        'project_id' => $project_id
     ));
 }
-add_action('wp_ajax_f2f_sync_hours_to_taskrow', 'f2f_ajax_sync_hours_to_taskrow');
+add_action('wp_ajax_f2f_import_single_project', 'f2f_ajax_import_single_project');
 
+/**
+ * AJAX: Listar todos os clientes da API Taskrow
+ * Endpoint: f2f_list_clients
+ * Retorna: Lista de clientes com ClientID, ClientNickname e ClientName
+ */
+function f2f_ajax_list_clients()
+{
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Sem permiss�o');
+    }
+
+    $host_name = get_option('f2f_taskrow_host_name', '');
+    $api_token = get_option('f2f_taskrow_api_token', '');
+
+    if (empty($host_name) || empty($api_token)) {
+        wp_send_json_error('API Taskrow n�o configurada');
+    }
+
+    // Endpoint para buscar clientes
+    $url = 'https://' . $host_name . '/api/v1/Search/SearchClients?q=&showInactives=false';
+
+    $response = wp_remote_request($url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 30,
+    ));
+
+    if (is_wp_error($response)) {
+        wp_send_json_error('Erro ao buscar clientes: ' . $response->get_error_message());
+    }
+
+    $response_code = wp_remote_retrieve_response_code($response);
+    if ($response_code !== 200) {
+        wp_send_json_error('Erro HTTP ' . $response_code . ' ao buscar clientes');
+    }
+
+    $body = wp_remote_retrieve_body($response);
+    $data = json_decode($body, true);
+
+    if (!is_array($data)) {
+        wp_send_json_error('Resposta inv�lida da API');
+    }
+
+    // Formatar resposta
+    $clients = array();
+    foreach ($data as $client) {
+        $clients[] = array(
+            'ClientID' => $client['clientID'] ?? $client['ClientID'] ?? null,
+            'ClientNickname' => $client['clientNickname'] ?? $client['ClientNickname'] ?? '',
+            'ClientName' => $client['clientName'] ?? $client['ClientName'] ?? '',
+        );
+    }
+
+    wp_send_json_success(array(
+        'clients' => $clients,
+        'total' => count($clients),
+    ));
+}
+add_action('wp_ajax_f2f_list_clients', 'f2f_ajax_list_clients');
+
+/**
+ * AJAX: Importar tarefas por ClientID (Nova estratégia)
+ * Endpoint: f2f_import_by_clients
+ * Busca tarefas de todos os clientes ao invés de iterar por projetos
+ */
+function f2f_ajax_import_by_clients()
+{
+    global $wpdb;
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Sem permissão');
+    }
+
+    // Verificar nonce (não é obrigatório para admin, mas vamos validar se presente)
+    if (isset($_POST['nonce']) && !wp_verify_nonce($_POST['nonce'], 'f2f_ajax_nonce')) {
+        wp_send_json_error('Nonce inválido');
+    }
+
+    $host_name = get_option('f2f_taskrow_host_name', '');
+    $api_token = get_option('f2f_taskrow_api_token', '');
+
+    if (empty($host_name) || empty($api_token)) {
+        wp_send_json_error('API Taskrow não configurada. Host: ' . $host_name . ' | Token: ' . substr($api_token, 0, 10) . '...');
+    }
+
+    // 1. Buscar lista de clientes (incluindo inativos)
+    $clients_url = 'https://' . $host_name . '/api/v1/Search/SearchClients?q=&showInactives=true';
+
+    $clients_response = wp_remote_request($clients_url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 30,
+    ));
+
+    if (is_wp_error($clients_response)) {
+        wp_send_json_error('Erro ao buscar clientes: ' . $clients_response->get_error_message());
+    }
+
+    $clients_data = json_decode(wp_remote_retrieve_body($clients_response), true);
+
+    if (!is_array($clients_data) || empty($clients_data)) {
+        wp_send_json_error('Nenhum cliente encontrado');
+    }
+
+    // DEBUG: Logar todos os clientes para identificar IDs corretos
+    error_log('=== LISTA DE CLIENTES TASKROW (total: ' . count($clients_data) . ') ===');
+    foreach ($clients_data as $c) {
+        $c_id = $c['clientID'] ?? $c['ClientID'] ?? 'N/A';
+        $c_name = trim($c['clientName'] ?? $c['ClientName'] ?? 'N/A');
+        $c_nick = trim($c['clientNickname'] ?? $c['ClientNickname'] ?? 'N/A');
+        error_log(sprintf("Cliente: ID=%s | Nome='%s' | Nick='%s'", $c_id, $c_name, $c_nick));
+    }
+    error_log('=== FIM LISTA CLIENTES ===');
+    $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
+
+    $total_imported = 0;
+    $total_updated = 0;
+    $projects_processed = 0;
+
+    // 2. Buscar tarefas dos PROJETOS específicos usando JobNumber -> JobID
+    $tasks_url = 'https://' . $host_name . '/api/v2/search/tasks/advancedsearch';
+    // Mapa de usuários para resolver ownerUserID -> ownerUserLogin quando faltante
+    $user_map = f2f_taskrow_get_user_map($api_token, $host_name);
+    $search_jobs_url_base = 'https://' . $host_name . '/api/v1/Search/SearchJobs?q=';
+
+    // Mapeamento dos projetos (clientNickname + jobNumber) baseado nas URLs enviadas
+    $allowed_jobs = array(
+        array('client' => 'GLP',              'jobNumber' => 116, 'display' => 'GLP'),
+        array('client' => 'ChegoLa',          'jobNumber' => 500, 'display' => 'Chego Lá'),
+        array('client' => 'ProjetoStella',    'jobNumber' => 508, 'display' => 'Merz IDT (Tech e SEO)'),
+        array('client' => 'Medtronic',        'jobNumber' => 581, 'display' => 'Medtronic'),
+        array('client' => 'F2FInstitucional', 'jobNumber' => 450, 'display' => 'F2F Mkt Institucional'),
+        array('client' => 'ABRAFATI',         'jobNumber' => 341, 'display' => 'ABRAFATI'),
+    );
+
+    foreach ($allowed_jobs as $jobInfo) {
+        $clientNicknameExpected = $jobInfo['client'];
+        $jobNumberExpected = (int)$jobInfo['jobNumber'];
+        $project_display = $jobInfo['display'];
+
+        // 2.1 Descobrir o JobID pelo SearchJobs usando o jobNumber
+        $jobs_response = wp_remote_request($search_jobs_url_base . urlencode((string)$jobNumberExpected), array(
+            'method'  => 'GET',
+            'headers' => array(
+                '__identifier' => $api_token,
+                'Content-Type' => 'application/json',
+            ),
+            'timeout' => 30,
+        ));
+
+        if (is_wp_error($jobs_response)) {
+            error_log('F2F: Erro ao buscar jobNumber ' . $jobNumberExpected . ': ' . $jobs_response->get_error_message());
+            continue;
+        }
+
+        $jobs_data = json_decode(wp_remote_retrieve_body($jobs_response), true);
+        $job_id = null;
+
+        if (is_array($jobs_data)) {
+            foreach ($jobs_data as $j) {
+                $jn = (int)($j['jobNumber'] ?? $j['JobNumber'] ?? 0);
+                $cn = trim($j['clientNickName'] ?? $j['ClientNickName'] ?? '');
+                if ($jn === $jobNumberExpected && strcasecmp($cn, $clientNicknameExpected) === 0) {
+                    $job_id = $j['jobID'] ?? $j['JobID'] ?? null;
+                    break;
+                }
+            }
+        }
+
+        if (!$job_id) {
+            error_log("F2F: ⚠️ Job não encontrado para {$clientNicknameExpected}/{$jobNumberExpected}. Pulando.");
+            continue;
+        }
+
+        error_log("F2F: ✅ Processando {$clientNicknameExpected}/{$jobNumberExpected} (JobID {$job_id}) como '{$project_display}'");
+
+        $page_number = 1;
+        $page_size = 500;
+
+        while (true) {
+            // Calcular data de 2 meses atrás
+            $two_months_ago = new DateTime();
+            $two_months_ago->modify('-2 months');
+
+            $body = array(
+                'JobID' => (int)$job_id,
+                'Closed' => false,
+                'StartDate' => $two_months_ago->format('Y-m-d\T00:00:00\Z'),
+                'Pagination' => array(
+                    'PageNumber' => $page_number,
+                    'PageSize' => $page_size,
+                )
+            );
+
+            $tasks_response = wp_remote_request($tasks_url, array(
+                'method' => 'POST',
+                'headers' => array(
+                    '__identifier' => $api_token,
+                    'Content-Type' => 'application/json',
+                ),
+                'body' => json_encode($body),
+                'timeout' => 60,
+            ));
+
+            if (is_wp_error($tasks_response)) {
+                error_log('F2F: Erro na p�gina ' . $page_number . ' do cliente ' . $client_id . ': ' . $tasks_response->get_error_message());
+                break;
+            }
+
+            $tasks_data = json_decode(wp_remote_retrieve_body($tasks_response), true);
+            $page_tasks = $tasks_data['data'] ?? $tasks_data;
+
+            if (empty($page_tasks) || !is_array($page_tasks)) {
+                break;
+            }
+
+            foreach ($page_tasks as $task) {
+                $task_id = $task['taskID'] ?? $task['TaskID'] ?? null;
+
+                if (!$task_id) {
+                    continue;
+                }
+
+                $existing = $wpdb->get_var($wpdb->prepare(
+                    "SELECT id FROM {$table_name} WHERE taskrow_id = %s",
+                    $task_id
+                ));
+
+                $owner_id = isset($task['ownerUserID']) ? (string)$task['ownerUserID'] : null;
+                $owner_login = $task['ownerUserLogin'] ?? null;
+                if (!$owner_login && $owner_id && isset($user_map[$owner_id])) {
+                    $owner_login = $user_map[$owner_id];
+                }
+
+                $data = array(
+                    'taskrow_id' => $task_id,
+                    'job_number' => $task['jobNumber'] ?? 0,
+                    'task_number' => $task['taskNumber'] ?? 0,
+                    'client_nickname' => $project_display,  // Usar o nome do projeto como nickname
+                    'title' => $task['taskTitle'] ?? $task['title'] ?? 'Sem título',
+                    'description' => $task['taskDescription'] ?? $task['description'] ?? '',
+                    'client_name' => $project_display,  // Usar o nome do projeto como client_name
+                    'status' => $task['pipelineStep'] ?? null,
+                    'priority' => $task['priority'] ?? $task['Priority'] ?? null,
+                    'due_date' => $task['dueDate'] ?? $task['due_date'] ?? null,
+                    'created_at' => $task['createdDate'] ?? $task['created_at'] ?? $task['dateCreated'] ?? current_time('mysql'),
+                    'attachments' => json_encode($task['attachments'] ?? array()),
+                    'owner_user_id' => $owner_id,
+                    'owner_user_login' => $owner_login,
+                );
+
+                if ($existing) {
+                    $wpdb->update($table_name, $data, array('id' => $existing));
+                    $total_updated++;
+                } else {
+                    $wpdb->insert($table_name, $data);
+                    $total_imported++;
+                }
+            }
+
+            // Verificar se deve continuar paginando
+            $should_break = false;
+            if (isset($tasks_data['data']) && count($tasks_data['data']) < $page_size) {
+                $should_break = true;
+            }
+            if (!isset($tasks_data['data']) && (count($tasks_data) < $page_size)) {
+                $should_break = true;
+            }
+
+            if ($should_break) {
+                break;
+            }
+
+            $page_number++;
+        }
+
+        $projects_processed++;
+    }
+
+    wp_send_json_success(array(
+        'message' => "Importação concluída! {$projects_processed} projetos processados.",
+        'imported' => $total_imported,
+        'updated' => $total_updated,
+        'clients_processed' => $projects_processed,  // Mantém o nome do campo para compatibilidade com o frontend
+    ));
+}
+add_action('wp_ajax_f2f_import_by_clients', 'f2f_ajax_import_by_clients');
+
+/**
+ * AJAX: Testar conexão com a API Taskrow
+ */
+function f2f_ajax_test_taskrow_connection()
+{
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Sem permissão');
+    }
+
+    $host_name = get_option('f2f_taskrow_host_name', '');
+    $api_token = get_option('f2f_taskrow_api_token', '');
+
+    if (empty($host_name) || empty($api_token)) {
+        wp_send_json_error('API não configurada. Configure Host e Token nas configurações.');
+    }
+
+    // Testa conexão listando clientes
+    $test_url = 'https://' . $host_name . '/api/v1/Search/SearchClients?q=&showInactives=false';
+
+    $response = wp_remote_request($test_url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 15,
+    ));
+
+    if (is_wp_error($response)) {
+        wp_send_json_error('Erro ao conectar: ' . $response->get_error_message());
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    
+    if ($status_code !== 200) {
+        $body = wp_remote_retrieve_body($response);
+        wp_send_json_error('Erro HTTP ' . $status_code . ': ' . substr($body, 0, 200));
+    }
+
+    $data = json_decode(wp_remote_retrieve_body($response), true);
+    
+    if (!is_array($data)) {
+        wp_send_json_error('Resposta inválida da API');
+    }
+
+    $client_count = count($data);
+    
+    wp_send_json_success(array(
+        'message' => "Conexão bem-sucedida! Encontrados {$client_count} clientes na API Taskrow."
+    ));
+}
+add_action('wp_ajax_f2f_test_taskrow_connection', 'f2f_ajax_test_taskrow_connection');
+
+/**
+ * AJAX: Listar todos os clientes da API Taskrow
+ */
+function f2f_ajax_list_taskrow_clients()
+{
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Sem permissão');
+    }
+
+    $host_name = get_option('f2f_taskrow_host_name', '');
+    $api_token = get_option('f2f_taskrow_api_token', '');
+
+    if (empty($host_name) || empty($api_token)) {
+        wp_send_json_error('API não configurada');
+    }
+
+    $clients_url = 'https://' . $host_name . '/api/v1/Search/SearchClients?q=&showInactives=false';
+
+    $response = wp_remote_request($clients_url, array(
+        'method' => 'GET',
+        'headers' => array(
+            '__identifier' => $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'timeout' => 30,
+    ));
+
+    if (is_wp_error($response)) {
+        wp_send_json_error('Erro ao conectar: ' . $response->get_error_message());
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    
+    if ($status_code !== 200) {
+        wp_send_json_error('Erro HTTP ' . $status_code);
+    }
+
+    $clients = json_decode(wp_remote_retrieve_body($response), true);
+    
+    if (!is_array($clients)) {
+        wp_send_json_error('Resposta inválida da API');
+    }
+
+    // Formatar dados dos clientes
+    $formatted_clients = array();
+    foreach ($clients as $client) {
+        $formatted_clients[] = array(
+            'id' => $client['clientID'] ?? $client['ClientID'] ?? 'N/A',
+            'name' => $client['clientName'] ?? $client['ClientName'] ?? 'N/A',
+            'nickname' => $client['clientNickname'] ?? $client['ClientNickname'] ?? 'N/A',
+            'active' => $client['active'] ?? $client['Active'] ?? true
+        );
+    }
+
+    wp_send_json_success(array(
+        'total' => count($formatted_clients),
+        'clients' => $formatted_clients
+    ));
+}
+add_action('wp_ajax_f2f_list_taskrow_clients', 'f2f_ajax_list_taskrow_clients');

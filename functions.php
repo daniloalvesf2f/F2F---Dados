@@ -1744,6 +1744,16 @@ function f2f_add_clickup_api_settings_page() {
         'f2f-clickup-api',
         'f2f_render_clickup_api_page'
     );
+    
+    // Adiciona página de configuração do Taskrow
+    add_submenu_page(
+        'f2f-dashboard-settings',
+        'Taskrow API',
+        'Taskrow API',
+        'manage_options',
+        'f2f-taskrow-config',
+        'f2f_render_taskrow_config_page'
+    );
 }
 add_action( 'admin_menu', 'f2f_add_clickup_api_settings_page', 20 );
 
@@ -2857,6 +2867,187 @@ function f2f_ajax_list_workspaces() {
     wp_send_json_success( array( 'workspaces' => $workspaces ) );
 }
 add_action( 'wp_ajax_f2f_list_workspaces', 'f2f_ajax_list_workspaces' );
+
+/**
+ * =====================
+ * Taskrow API Configuration Page
+ * =====================
+ */
+
+/**
+ * Renderiza a página de configuração da API do Taskrow
+ */
+function f2f_render_taskrow_config_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+    
+    $api_token = get_option( 'f2f_taskrow_api_token', '' );
+    $api_host = get_option( 'f2f_taskrow_host_name', '' );
+    
+    // Testa conexão se configurado
+    $connection_status = '';
+    if ( ! empty( $api_token ) && ! empty( $api_host ) ) {
+        $test_url = 'https://' . $api_host . '/api/v1/Search/SearchClients?q=&showInactives=false';
+        
+        $response = wp_remote_request( $test_url, array(
+            'method' => 'GET',
+            'headers' => array(
+                '__identifier' => $api_token,
+                'Content-Type' => 'application/json',
+            ),
+            'timeout' => 15,
+        ) );
+        
+        if ( is_wp_error( $response ) ) {
+            $connection_status = '<div class="notice notice-error"><p><strong>Erro:</strong> ' . $response->get_error_message() . '</p></div>';
+        } else {
+            $status_code = wp_remote_retrieve_response_code( $response );
+            if ( $status_code === 200 ) {
+                $connection_status = '<div class="notice notice-success"><p><strong>Conexão OK!</strong> API Taskrow configurada corretamente.</p></div>';
+            } else {
+                $connection_status = '<div class="notice notice-error"><p><strong>Erro:</strong> Status HTTP ' . $status_code . '</p></div>';
+            }
+        }
+    }
+    
+    ?>
+    <div class="wrap">
+        <h1>Configuração da API Taskrow</h1>
+        
+        <?php echo $connection_status; ?>
+        
+        <?php if ( isset( $_GET['updated'] ) ) : ?>
+        <div class="notice notice-success is-dismissible">
+            <p>Configurações salvas com sucesso!</p>
+        </div>
+        <?php endif; ?>
+        
+        <div class="card" style="max-width: 800px;">
+            <h2>Credenciais da API</h2>
+            
+            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+                <?php wp_nonce_field( 'f2f_save_taskrow_api', 'f2f_nonce' ); ?>
+                <input type="hidden" name="action" value="f2f_save_taskrow_api">
+                
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">
+                            <label for="api_host">Host da API</label>
+                        </th>
+                        <td>
+                            <input type="text" 
+                                   id="api_host" 
+                                   name="api_host" 
+                                   value="<?php echo esc_attr( $api_host ); ?>" 
+                                   class="regular-text"
+                                   placeholder="f2f.taskrow.com">
+                            <p class="description">Host da sua instância Taskrow (sem https://)</p>
+                        </td>
+                    </tr>
+                    
+                    <tr>
+                        <th scope="row">
+                            <label for="api_token">Token da API</label>
+                        </th>
+                        <td>
+                            <input type="text" 
+                                   id="api_token" 
+                                   name="api_token" 
+                                   value="<?php echo esc_attr( $api_token ); ?>" 
+                                   class="large-text"
+                                   placeholder="Seu token da API Taskrow">
+                            <p class="description">Token de autenticação da API Taskrow</p>
+                        </td>
+                    </tr>
+                </table>
+                
+                <?php submit_button( 'Salvar Configurações' ); ?>
+            </form>
+        </div>
+        
+        <?php if ( ! empty( $api_token ) && ! empty( $api_host ) ) : ?>
+        <div class="card" style="max-width: 800px; margin-top: 20px;">
+            <h2>Testar Conexão</h2>
+            <p>Clique no botão abaixo para testar a conexão com a API do Taskrow.</p>
+            <button type="button" class="button button-secondary" id="test-taskrow-connection">
+                <span class="dashicons dashicons-update-alt"></span> Testar Conexão
+            </button>
+            <div id="test-result" style="margin-top: 15px;"></div>
+        </div>
+        <?php endif; ?>
+    </div>
+    
+    <style>
+    .card {
+        background: #fff;
+        border: 1px solid #ccd0d4;
+        box-shadow: 0 1px 1px rgba(0,0,0,.04);
+        padding: 20px;
+        margin-top: 20px;
+    }
+    .card h2 {
+        margin-top: 0;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #eee;
+    }
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    .spin {
+        animation: spin 1s linear infinite;
+    }
+    </style>
+    
+    <script>
+    jQuery(document).ready(function($) {
+        $('#test-taskrow-connection').on('click', function() {
+            var $btn = $(this);
+            var originalText = $btn.html();
+            
+            $btn.prop('disabled', true).html('<span class="dashicons dashicons-update-alt spin"></span> Testando...');
+            $('#test-result').html('');
+            
+            $.post(ajaxurl, {
+                action: 'f2f_test_taskrow_connection'
+            }, function(response) {
+                if (response.success) {
+                    $('#test-result').html('<div class="notice notice-success"><p>' + response.data.message + '</p></div>');
+                } else {
+                    $('#test-result').html('<div class="notice notice-error"><p><strong>Erro:</strong> ' + response.data + '</p></div>');
+                }
+            }).fail(function() {
+                $('#test-result').html('<div class="notice notice-error"><p><strong>Erro:</strong> Falha na requisição AJAX.</p></div>');
+            }).always(function() {
+                $btn.prop('disabled', false).html(originalText);
+            });
+        });
+    });
+    </script>
+    <?php
+}
+
+/**
+ * Salva configurações da API Taskrow
+ */
+function f2f_handle_save_taskrow_api() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Permissão insuficiente.' );
+    }
+    
+    check_admin_referer( 'f2f_save_taskrow_api', 'f2f_nonce' );
+    
+    $api_host = isset( $_POST['api_host'] ) ? sanitize_text_field( $_POST['api_host'] ) : '';
+    $api_token = isset( $_POST['api_token'] ) ? sanitize_text_field( $_POST['api_token'] ) : '';
+    
+    update_option( 'f2f_taskrow_host_name', $api_host );
+    update_option( 'f2f_taskrow_api_token', $api_token );
+    
+    wp_safe_redirect( admin_url( 'admin.php?page=f2f-taskrow-config&updated=1' ) );
+    exit;
+}
+add_action( 'admin_post_f2f_save_taskrow_api', 'f2f_handle_save_taskrow_api' );
 
 /**
  * Cria automaticamente a página "Criar Tarefa" na ativação do tema

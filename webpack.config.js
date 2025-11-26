@@ -21,6 +21,7 @@ module.exports = {
 			devMiddleware: {
 				writeToDisk: true,
 			},
+			allowedHosts: 'all', // Fix for Local by Flywheel Host/Origin header errors
 		},
 		context: path.resolve(__dirname, "assets"),
 		entry: ["./main.js", "./main.scss"],
@@ -39,5 +40,8 @@ module.exports = {
 				stage: removeEmptyScriptsPlugin.STAGE_AFTER_PROCESS_PLUGINS,
 			}),
 		],
+		performance: {
+			hints: false, // Suppress bundle size warnings
+		},
 	},
 };
