@@ -83,10 +83,10 @@ $sent_demands = count(array_filter($demands, function ($d) {
 
             <!-- Botões de Ação -->
             <div class="mb-4">
-                <button type="button" class="btn btn-outline-info btn-lg me-2" id="test-connection-btn">
+                <!-- <button type="button" class="btn btn-outline-info btn-lg me-2" id="test-connection-btn">
                     <i class="fas fa-plug me-2"></i>
                     Testar Conexão Taskrow
-                </button>
+                </button> -->
                 <button type="button" class="btn btn-primary btn-lg me-2" id="import-demands-btn">
                     <i class="fas fa-download me-2"></i>
                     Importar Demandas do Taskrow
@@ -95,10 +95,10 @@ $sent_demands = count(array_filter($demands, function ($d) {
                     <i class="fas fa-trash me-2"></i>
                     Apagar Todas as Demandas
                 </button>
-                <button type="button" class="btn btn-info btn-lg me-2" id="list-clients-btn">
+                <!-- <button type="button" class="btn btn-info btn-lg me-2" id="list-clients-btn">
                     <i class="fas fa-building me-2"></i>
                     Ver Clientes
-                </button>
+                </button> -->
                 <a href="<?php echo admin_url('admin.php?page=f2f-taskrow-config'); ?>"
                     class="btn btn-secondary btn-lg">
                     <i class="fas fa-cog me-2"></i>
@@ -172,18 +172,18 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                 }
                                 $clients = array_unique($clients);
                                 sort($clients);
-                                
+
                                 foreach ($clients as $client):
                                 ?>
-                                        <option value="<?php echo esc_attr($client); ?>"><?php echo esc_html($client); ?>
-                                        </option>
+                                    <option value="<?php echo esc_attr($client); ?>"><?php echo esc_html($client); ?>
+                                    </option>
                                 <?php
                                 endforeach;
                                 ?>
                             </select>
                         </div>
-                        <!-- Novo filtro: Responsável -->
-                        <div class="col-md-2">
+                        <!-- Novo filtro: Responsável (oculto no front, porém ativo) -->
+                        <div class="col-md-2 d-none" id="filter-owner-wrapper" aria-hidden="true">
                             <label for="filter-owner" class="form-label fw-semibold">
                                 <i class="fas fa-user-check me-1"></i> Responsável
                             </label>
@@ -280,18 +280,18 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                         <th style="min-width: 80px; width: 80px;" class="text-center">
                                             <i class="fas fa-hashtag"></i> ID
                                         </th>
-                                        <th style="min-width: 300px;">
+                                        <th style="min-width: 290px;">
                                             <i class="fas fa-tasks"></i> Tarefa
                                         </th>
                                         <th style="min-width: 120px; width: 150px;">
                                             <i class="fas fa-user-circle"></i> Cliente
                                         </th>
-                                        <th style="min-width: 110px; width: 110px;" class="text-center">
+                                        <th style="min-width: 150px; width: 160px;" class="text-center">
                                             <i class="fas fa-info-circle"></i> Status
                                         </th>
-                                        <th style="min-width: 100px; width: 100px;" class="text-center">
+                                        <!-- <th style="min-width: 100px; width: 100px;" class="text-center">
                                             <i class="fas fa-flag"></i> Prioridade
-                                        </th>
+                                        </th> -->
                                         <th style="min-width: 120px; width: 120px;" class="text-center">
                                             <i class="fas fa-calendar-alt"></i> Entrega
                                         </th>
@@ -314,34 +314,34 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                         }
                                     ?>
                                         <?php
-                                            $titleSafe = isset($demand->title) ? (string)$demand->title : '';
-                                            $statusSafe = isset($demand->status) ? (string)$demand->status : '';
-                                            $descSafe = isset($demand->description) ? (string)$demand->description : '';
-                                            $ownerLoginSafe = isset($demand->owner_user_login) ? (string)$demand->owner_user_login : '';
-                                            $group = '';
-                                            if (
-                                                stripos($statusSafe, 'tech') !== false ||
-                                                stripos($titleSafe, 'tech') !== false ||
-                                                stripos($descSafe, 'tech') !== false ||
-                                                stripos($ownerLoginSafe, 'ingrid') !== false ||
-                                                stripos($ownerLoginSafe, 'raissa') !== false
-                                            ) {
-                                                $group = 'tech';
+                                        $titleSafe = isset($demand->title) ? (string)$demand->title : '';
+                                        $statusSafe = isset($demand->status) ? (string)$demand->status : '';
+                                        $descSafe = isset($demand->description) ? (string)$demand->description : '';
+                                        $ownerLoginSafe = isset($demand->owner_user_login) ? (string)$demand->owner_user_login : '';
+                                        $group = '';
+                                        if (
+                                            stripos($statusSafe, 'tech') !== false ||
+                                            stripos($titleSafe, 'tech') !== false ||
+                                            stripos($descSafe, 'tech') !== false ||
+                                            stripos($ownerLoginSafe, 'ingrid') !== false ||
+                                            stripos($ownerLoginSafe, 'raissa') !== false
+                                        ) {
+                                            $group = 'tech';
+                                        }
+                                        $clientSafeRaw = '';
+                                        if (!empty($demand->client_nickname)) {
+                                            $clientSafeRaw = (string)$demand->client_nickname;
+                                        } elseif (!empty($demand->client_name)) {
+                                            $clientSafeRaw = (string)$demand->client_name;
+                                        }
+                                        $clientDataAttr = strtolower($clientSafeRaw);
+                                        $createdStr = '';
+                                        if (!empty($demand->created_at)) {
+                                            $cts = strtotime($demand->created_at);
+                                            if ($cts && $cts > 0) {
+                                                $createdStr = date('d/m/Y', $cts);
                                             }
-                                            $clientSafeRaw = '';
-                                            if (!empty($demand->client_nickname)) {
-                                                $clientSafeRaw = (string)$demand->client_nickname;
-                                            } elseif (!empty($demand->client_name)) {
-                                                $clientSafeRaw = (string)$demand->client_name;
-                                            }
-                                            $clientDataAttr = strtolower($clientSafeRaw);
-                                            $createdStr = '';
-                                            if (!empty($demand->created_at)) {
-                                                $cts = strtotime($demand->created_at);
-                                                if ($cts && $cts > 0) {
-                                                    $createdStr = date('d/m/Y', $cts);
-                                                }
-                                            }
+                                        }
                                         ?>
                                         <tr data-demand-id="<?php echo $demand->id; ?>"
                                             data-title="<?php echo esc_attr(strtolower($titleSafe)); ?>"
@@ -413,8 +413,8 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                     <?php echo esc_html($status_text); ?>
                                                 </span>
                                             </td>
-                                            <td class="text-center align-middle">
-                                                <?php if ($demand->priority):
+                                            <!-- <td class="text-center align-middle">
+                                                <//?php if ($demand->priority):
                                                     $priority_class = 'secondary';
                                                     $priority_icon = 'fa-flag';
 
@@ -436,12 +436,12 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                 ?>
                                                     <span class="badge bg-<?php echo $priority_class; ?> priority-badge">
                                                         <i class="fas <?php echo $priority_icon; ?> me-1"></i>
-                                                        <?php echo esc_html(ucfirst($demand->priority)); ?>
+                                                        <//?php echo esc_html(ucfirst($demand->priority)); ?>
                                                     </span>
-                                                <?php else: ?>
+                                                <////?php else: ?>
                                                     <span class="text-muted">-</span>
-                                                <?php endif; ?>
-                                            </td>
+                                                <//?php endif; ?>
+                                            </td> -->
                                             <td class="text-center align-middle">
                                                 <?php
                                                 if (!empty($demand->due_date)) {
@@ -592,7 +592,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
             alert('Erro: Configuração do tema não carregada corretamente. Recarregue a página.');
             return;
         }
-        
+
         console.log('✅ Script carregado com sucesso! v1.0.2');
 
         // Preenche o select de Responsável a partir das linhas renderizadas, se vazio
@@ -602,7 +602,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
             // já possui opções além de "Todos"? então mantém
             if ($sel.find('option').length > 1) return;
             const owners = new Set();
-            $('.demand-row').each(function(){
+            $('.demand-row').each(function() {
                 const val = String($(this).data('owner') || '').trim().toLowerCase();
                 if (val) owners.add(val);
             });
@@ -639,7 +639,9 @@ $sent_demands = count(array_filter($demands, function ($d) {
                 }
                 return at - bt; // ascendente por prazo
             });
-            $.each(rows, function(_, row) { $tbody.append(row); });
+            $.each(rows, function(_, row) {
+                $tbody.append(row);
+            });
         };
 
         // Filtros em tempo real
@@ -683,7 +685,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                 const matchesOwner = !ownerFilter || owner.includes(ownerFilter);
 
                 let matchesDate = true;
-                
+
                 if (dateFilter) {
                     // Função para verificar se uma data atende ao filtro
                     const withinFilter = (d) => {
@@ -798,15 +800,19 @@ $sent_demands = count(array_filter($demands, function ($d) {
         // Defaults ao carregar: Data = últimos 2 meses, Grupo = tech, Responsável = Raissa
         $('#filter-created-date').val('last-2-months');
         $('#filter-group').val('tech');
-        const ownerDefault = (function(){
+        const ownerDefault = (function() {
             let val = '';
-            $('#filter-owner option').each(function(){
+            $('#filter-owner option').each(function() {
                 const v = ($(this).val() || '').toLowerCase();
-                if (!val && v.includes('raissa')) { val = $(this).val(); }
+                if (!val && v.includes('raissa')) {
+                    val = $(this).val();
+                }
             });
             return val;
         })();
-        if (ownerDefault) { $('#filter-owner').val(ownerDefault); }
+        if (ownerDefault) {
+            $('#filter-owner').val(ownerDefault);
+        }
         filterTable();
 
         // Limpar filtros
@@ -816,15 +822,21 @@ $sent_demands = count(array_filter($demands, function ($d) {
             $('#filter-client').val('');
             $('#filter-created-date').val('last-2-months');
             $('#filter-group').val('tech');
-            const ownerDefault2 = (function(){
+            const ownerDefault2 = (function() {
                 let val = '';
-                $('#filter-owner option').each(function(){
+                $('#filter-owner option').each(function() {
                     const v = ($(this).val() || '').toLowerCase();
-                    if (!val && v.includes('raissa')) { val = $(this).val(); }
+                    if (!val && v.includes('raissa')) {
+                        val = $(this).val();
+                    }
                 });
                 return val;
             })();
-            if (ownerDefault2) { $('#filter-owner').val(ownerDefault2); } else { $('#filter-owner').val(''); }
+            if (ownerDefault2) {
+                $('#filter-owner').val(ownerDefault2);
+            } else {
+                $('#filter-owner').val('');
+            }
             filterTable();
         });
 
@@ -924,8 +936,8 @@ $sent_demands = count(array_filter($demands, function ($d) {
             $progressBar.css('width', '0%').text('0%').removeClass('bg-success bg-danger');
             $log.html('');
             $closeBtn.prop('disabled', true);
-            $statusText.text('Buscando projetos...');
-            $subStatusText.text('Conectando à API...');
+            $statusText.text('Preparando importação...');
+            $subStatusText.text('Conectando à API do Taskrow...');
             $modal.show();
 
             function addLog(msg, type = 'info') {
@@ -936,15 +948,69 @@ $sent_demands = count(array_filter($demands, function ($d) {
             }
 
             addLog('Iniciando importação...', 'info');
-            $statusText.text('Importando tarefas...');
-            $subStatusText.text('Processando todos os clientes');
-            $progressBar.css('width', '50%').text('50%');
+            // Barra de progresso em etapas simuladas até 95% (finalização vai a 100%)
+            let progress = 0;
+            const setProgress = (p) => {
+                p = Math.max(0, Math.min(100, Math.floor(p)));
+                $progressBar.css('width', p + '%').text(p + '%');
+            };
+            const stages = [{
+                    threshold: 1,
+                    status: 'Conectando...',
+                    sub: 'Validando credenciais'
+                },
+                {
+                    threshold: 8,
+                    status: 'Carregando usuários...',
+                    sub: 'Montando mapa UserID → Login'
+                },
+                {
+                    threshold: 20,
+                    status: 'Buscando projetos...',
+                    sub: 'Localizando clientes/projetos permitidos'
+                },
+                {
+                    threshold: 40,
+                    status: 'Importando tarefas...',
+                    sub: 'Paginando resultados (lotes grandes)'
+                },
+                {
+                    threshold: 65,
+                    status: 'Gravando no banco...',
+                    sub: 'Upsert de novas/atualizadas'
+                },
+                {
+                    threshold: 85,
+                    status: 'Finalizando...',
+                    sub: 'Limpando memória e preparando resumo'
+                }
+            ];
+            let stageIndexApplied = -1;
+            const tick = () => {
+                if (progress >= 95) return; // aguarda retorno real para 100%
+                const delta = Math.random() * 2.2 + 0.8; // 0.8% a 3.0%
+                progress = Math.min(95, progress + delta);
+                setProgress(progress);
+                // atualizar textos por estágio
+                for (let i = stages.length - 1; i >= 0; i--) {
+                    if (progress >= stages[i].threshold && stageIndexApplied !== i) {
+                        stageIndexApplied = i;
+                        $statusText.text(stages[i].status);
+                        $subStatusText.text(stages[i].sub);
+                        addLog(stages[i].status + ' — ' + stages[i].sub);
+                        break;
+                    }
+                }
+            };
+            const timer = setInterval(tick, 400);
+            setProgress(0);
 
             $.post(f2f_ajax.ajaxurl, {
                     action: 'f2f_import_by_clients',
                     nonce: f2f_ajax.nonce
                 })
                 .done(function(response) {
+                    clearInterval(timer);
                     if (!response.success) {
                         addLog('Erro ao importar: ' + response.data, 'error');
                         $statusText.text('Erro na importação');
@@ -962,7 +1028,8 @@ $sent_demands = count(array_filter($demands, function ($d) {
 
                     $statusText.text('Importação Concluída!');
                     $subStatusText.text(`${clientsProcessed} clientes | ${imported} novos | ${updated} atualizados`);
-                    $progressBar.css('width', '100%').text('100%').addClass('bg-success');
+                    setProgress(100);
+                    $progressBar.addClass('bg-success');
                     $closeBtn.prop('disabled', false).text('Concluir e Recarregar');
 
                     $closeBtn.off('click').on('click', function() {
@@ -971,6 +1038,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
 
                 })
                 .fail(function() {
+                    clearInterval(timer);
                     addLog('Erro fatal ao conectar com servidor.', 'error');
                     $statusText.text('Erro de Conexão');
                     $progressBar.addClass('bg-danger');
@@ -1120,10 +1188,10 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                 <tbody>`;
 
                         clients.forEach(client => {
-                            const status = client.active ? 
-                                '<span class="badge bg-success">Ativo</span>' : 
+                            const status = client.active ?
+                                '<span class="badge bg-success">Ativo</span>' :
                                 '<span class="badge bg-secondary">Inativo</span>';
-                            
+
                             html += `<tr>
                                 <td><code>${client.id}</code></td>
                                 <td>${client.name}</td>
@@ -1295,6 +1363,11 @@ $sent_demands = count(array_filter($demands, function ($d) {
         background: linear-gradient(to bottom, #f8f9fa 0%, #f1f3f5 100%);
     }
 
+    /* Fixa layout da tabela para respeitar larguras dos cabeçalhos */
+    .taskrow-table {
+        table-layout: fixed;
+    }
+
     .table-danger-subtle {
         background-color: #fff5f5 !important;
         border-left: 4px solid #dc3545;
@@ -1315,9 +1388,12 @@ $sent_demands = count(array_filter($demands, function ($d) {
 
     .status-badge {
         min-width: 90px;
+        max-width: 100%;
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .priority-badge {
