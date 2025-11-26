@@ -1621,3 +1621,119 @@ function f2f_ajax_list_taskrow_clients()
     ));
 }
 add_action('wp_ajax_f2f_list_taskrow_clients', 'f2f_ajax_list_taskrow_clients');
+
+/**
+ * AJAX: Enviar uma demanda importada para o ClickUp
+ * action: f2f_send_demand_to_clickup
+ * params: demand_id (int)
+ */
+function f2f_ajax_send_demand_to_clickup()
+{
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Sem permissão');
+    }
+
+    // Validação básica de nonce se fornecido
+    if (isset($_POST['nonce']) && !wp_verify_nonce($_POST['nonce'], 'f2f_ajax_nonce')) {
+        wp_send_json_error('Erro de segurança (nonce inválido)');
+    }
+
+    $demand_id = isset($_POST['demand_id']) ? intval($_POST['demand_id']) : 0;
+    if ($demand_id <= 0) {
+        wp_send_json_error('Parâmetro inválido: demand_id');
+    }
+
+    // Carregar classe da API ClickUp
+    if (!class_exists('F2F_ClickUp_API')) {
+        require_once get_template_directory() . '/inc/class-clickup-api.php';
+    }
+    $clickup_api = F2F_ClickUp_API::get_instance();
+    if (!$clickup_api->is_configured()) {
+        wp_send_json_error('ClickUp API não está configurada');
+    }
+
+    // Lista padrão onde criar a tarefa
+    $default_list_id = get_option('f2f_clickup_default_list', '');
+    if (empty($default_list_id)) {
+        wp_send_json_error('Lista padrão do ClickUp não configurada');
+    }
+
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
+
+    // Buscar a demanda
+    $demand = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table_name} WHERE id = %d", $demand_id));
+    if (!$demand) {
+        wp_send_json_error('Demanda não encontrada');
+    }
+
+    // Evitar envio duplicado
+    if (!empty($demand->clickup_id)) {
+        wp_send_json_error('Esta demanda já foi enviada ao ClickUp');
+    }
+
+    // Montar dados da tarefa
+    $title = isset($demand->title) ? (string)$demand->title : ('Taskrow #' . $demand->taskrow_id);
+    $client = !empty($demand->client_nickname) ? (string)$demand->client_nickname : ((string)$demand->client_name);
+    $desc_parts = array();
+    $desc_parts[] = '**Origem:** Taskrow';
+    $desc_parts[] = '• ID Taskrow: #' . (string)$demand->taskrow_id;
+    if (!empty($client)) {
+        $desc_parts[] = '• Cliente: ' . $client;
+    }
+    if (!empty($demand->job_number)) {
+        $desc_parts[] = '• Job: #' . (string)$demand->job_number;
+    }
+    if (!empty($demand->task_number)) {
+        $desc_parts[] = '• Tarefa: T-' . (string)$demand->task_number;
+    }
+    $base_desc = implode("\n", $desc_parts);
+    $full_desc = trim($base_desc . "\n\n" . (string)($demand->description ?? ''));
+
+    $task_data = array(
+        'name'        => $title,
+        'description' => $full_desc,
+    );
+
+    // Data de entrega (se válida)
+    if (!empty($demand->due_date)) {
+        $task_data['due_date'] = (string)$demand->due_date; // F2F_ClickUp_API converte para ms
+    }
+
+    // Tags básicas: cliente (se houver)
+    $tags = array();
+    if (!empty($client)) {
+        $tags[] = preg_replace('/\s+/', '-', strtolower($client));
+    }
+    if (!empty($tags)) {
+        $task_data['tags'] = $tags;
+    }
+
+    // Criar tarefa no ClickUp
+    $result = $clickup_api->create_task($default_list_id, $task_data);
+    if (is_wp_error($result)) {
+        wp_send_json_error('Falha ao criar tarefa no ClickUp: ' . $result->get_error_message());
+    }
+
+    $created_task_id = isset($result['id']) ? (string)$result['id'] : '';
+    if ($created_task_id === '') {
+        wp_send_json_error('Tarefa criada mas sem ID retornado do ClickUp');
+    }
+
+    // Atualizar a demanda local com o ID do ClickUp e status
+    $wpdb->update(
+        $table_name,
+        array(
+            'clickup_id' => $created_task_id,
+            'status'     => 'sent_to_clickup',
+            'updated_at' => current_time('mysql'),
+        ),
+        array('id' => $demand_id)
+    );
+
+    wp_send_json_success(array(
+        'message'    => 'Demanda enviada ao ClickUp com sucesso! ID: ' . $created_task_id,
+        'clickup_id' => $created_task_id,
+    ));
+}
+add_action('wp_ajax_f2f_send_demand_to_clickup', 'f2f_ajax_send_demand_to_clickup');
