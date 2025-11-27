@@ -272,6 +272,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                             </div>
                         </div>
                     </div>
+                 
                     <div class="card-body p-0">
                         <div class="table-responsive" style="max-height: 70vh; overflow-y: auto;">
                             <table class="table table-hover taskrow-table mb-0" id="demands-table">
@@ -289,9 +290,9 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                         <th style="min-width: 150px; width: 160px;" class="text-center">
                                             <i class="fas fa-info-circle"></i> Status
                                         </th>
-                                        <!-- <th style="min-width: 100px; width: 100px;" class="text-center">
+                                        <th style="min-width: 100px; width: 100px;" class="text-center">
                                             <i class="fas fa-flag"></i> Prioridade
-                                        </th> -->
+                                        </th>
                                         <th style="min-width: 120px; width: 120px;" class="text-center">
                                             <i class="fas fa-calendar-alt"></i> Entrega
                                         </th>
@@ -348,6 +349,9 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                             data-client="<?php echo esc_attr($clientDataAttr); ?>"
                                             data-status="<?php echo esc_attr($statusSafe); ?>"
                                             data-taskrow-id="<?php echo esc_attr($demand->taskrow_id); ?>"
+                                            data-job-number="<?php echo esc_attr($demand->job_number); ?>"
+                                            data-task-number="<?php echo esc_attr($demand->task_number); ?>"
+                                            data-client-nickname="<?php echo esc_attr($demand->client_nickname); ?>"
                                             data-owner="<?php echo esc_attr(strtolower($ownerLoginSafe)); ?>"
                                             data-created="<?php echo esc_attr($createdStr); ?>"
                                             data-group="<?php echo esc_attr($group); ?>"
@@ -367,10 +371,15 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                     <strong
                                                         class="d-block mb-1 text-dark"><?php echo esc_html($demand->title); ?></strong>
                                                     <?php if ($demand->description): ?>
-                                                        <small class="text-muted d-block task-description">
-                                                            <i class="fas fa-align-left me-1"></i>
-                                                            <?php echo esc_html(wp_trim_words($demand->description, 20)); ?>
-                                                        </small>
+                                                        <div class="task-desc-wrapper">
+                                                            <small class="text-muted d-block task-description">
+                                                                <i class="fas fa-align-left me-1"></i>
+                                                                <?php echo esc_html(wp_trim_words(wp_strip_all_tags($demand->description), 25)); ?>
+                                                            </small>
+                                                            <span class="task-description-full d-none">
+                                                                <?php echo wp_kses_post($demand->description); ?>
+                                                            </span>
+                                                        </div>
                                                     <?php endif; ?>
                                                     <?php if (!empty($demand->job_number)): ?>
                                                         <small class="text-info d-block mt-1">
@@ -413,35 +422,41 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                     <?php echo esc_html($status_text); ?>
                                                 </span>
                                             </td>
-                                            <!-- <td class="text-center align-middle">
-                                                <//?php if ($demand->priority):
+                                            <td class="text-center align-middle">
+                                                <?php
+                                                // Definir ícone/classe de prioridade de forma segura
+                                                $priority_val = $demand->priority ?? '';
+                                                if (!empty($priority_val)) {
                                                     $priority_class = 'secondary';
                                                     $priority_icon = 'fa-flag';
-
-                                                    switch (strtolower($demand->priority)) {
+                                                    switch (strtolower($priority_val)) {
                                                         case 'urgent':
                                                         case 'alta':
                                                         case 'high':
                                                             $priority_class = 'danger';
+                                                            $priority_icon = 'fa-exclamation-circle';
                                                             break;
                                                         case 'media':
                                                         case 'medium':
                                                             $priority_class = 'warning';
+                                                            $priority_icon = 'fa-exclamation-triangle';
                                                             break;
                                                         case 'baixa':
                                                         case 'low':
                                                             $priority_class = 'info';
+                                                            $priority_icon = 'fa-info-circle';
                                                             break;
                                                     }
                                                 ?>
-                                                    <span class="badge bg-<?php echo $priority_class; ?> priority-badge">
-                                                        <i class="fas <?php echo $priority_icon; ?> me-1"></i>
-                                                        <//?php echo esc_html(ucfirst($demand->priority)); ?>
+                                                    <span class="badge bg-<?php echo esc_attr($priority_class); ?> priority-badge">
+                                                        <i class="fas <?php echo esc_attr($priority_icon); ?> me-1"></i>
+                                                        <?php echo esc_html(ucfirst($priority_val)); ?>
                                                     </span>
-                                                <////?php else: ?>
-                                                    <span class="text-muted">-</span>
-                                                <//?php endif; ?>
-                                            </td> -->
+                                                <?php
+                                                    echo '<span class="text-muted">-</span>';
+                                                }
+                                                ?>
+                                            </td>
                                             <td class="text-center align-middle">
                                                 <?php
                                                 if (!empty($demand->due_date)) {
@@ -451,7 +466,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                         $date_class = 'text-muted';
                                                         $date_icon = 'fa-calendar';
                                                         $date_badge_class = 'secondary';
-
+                                                        $date_text = null;
                                                         if ($days_until_due !== null) {
                                                             if ($days_until_due < 0) {
                                                                 $date_class = 'text-danger';
@@ -467,13 +482,13 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                                 $date_text = 'Em ' . $days_until_due . ' dias';
                                                             }
                                                         }
-                                                ?>
+                                                        ?>
                                                         <div class="date-info">
                                                             <span class="<?php echo $date_class; ?> fw-semibold d-block">
                                                                 <i class="fas <?php echo $date_icon; ?> me-1"></i>
                                                                 <?php echo $formatted_date; ?>
                                                             </span>
-                                                            <?php if (isset($date_text)): ?>
+                                                            <?php if (!empty($date_text)): ?>
                                                                 <small>
                                                                     <span class="badge bg-<?php echo $date_badge_class; ?> mt-1">
                                                                         <?php echo $date_text; ?>
@@ -481,7 +496,7 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                                 </small>
                                                             <?php endif; ?>
                                                         </div>
-                                                <?php
+                                                        <?php
                                                     } else {
                                                         echo '<span class="text-danger" title="Data inválida"><i class="fas fa-times-circle"></i> Inválida</span>';
                                                     }
@@ -507,14 +522,21 @@ $sent_demands = count(array_filter($demands, function ($d) {
                                                         data-demand-id="<?php echo $demand->id; ?>" title="Ver detalhes">
                                                         <i class="fas fa-eye"></i>
                                                     </button>
-
+                                                    <!-- 
                                                     <button class="btn btn-outline-info copy-info-btn"
-                                                        data-demand-id="<?php echo $demand->id; ?>"
-                                                        data-title="<?php echo esc_attr($demand->title); ?>"
-                                                        data-client="<?php echo esc_attr($demand->client_nickname ?: $demand->client_name); ?>"
+                                                        data-demand-id="<//?php echo $demand->id; ?>"
+                                                        data-title="<//?php echo esc_attr($demand->title); ?>"
+                                                        data-client="<//?php echo esc_attr($demand->client_nickname ?: $demand->client_name); ?>"
                                                         title="Copiar informações">
                                                         <i class="fas fa-copy"></i>
                                                     </button>
+                                                    <button class="btn btn-outline-primary view-description-btn"
+                                                        data-client-nickname="<//?php echo esc_attr($demand->client_nickname); ?>"
+                                                        data-job-number="<//?php echo esc_attr($demand->job_number); ?>"
+                                                        data-task-number="<//?php echo esc_attr($demand->task_number); ?>"
+                                                        title="Ver descrição (Taskrow)">
+                                                        <i class="fas fa-align-left"></i>
+                                                    </button> -->
                                                 </div>
                                             </td>
                                         </tr>
@@ -552,6 +574,15 @@ $sent_demands = count(array_filter($demands, function ($d) {
             <div class="modal-body" id="modal-demand-details">
                 <!-- Conteúdo carregado via JavaScript -->
             </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-primary" id="modal-open-taskrow-btn">
+                    <i class="fas fa-external-link-alt me-1"></i> Abrir no Taskrow
+                </button>
+                <button type="button" class="btn btn-primary" id="modal-export-clickup-btn">
+                    <i class="fas fa-paper-plane me-1"></i> Exportar para ClickUp
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
         </div>
     </div>
 </div>
@@ -583,9 +614,52 @@ $sent_demands = count(array_filter($demands, function ($d) {
     </div>
 </div>
 
+<!-- Modal de Descrição da Taskrow -->
+<div class="modal fade" id="taskDescriptionModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-align-left me-2"></i>Descrição da Tarefa (Taskrow)</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="task-desc-loading" class="alert alert-info mb-3" style="display:none;">
+                    <i class="fas fa-spinner fa-spin me-1"></i> Carregando descrição...
+                </div>
+                <div id="task-desc-error" class="alert alert-danger mb-3" style="display:none;"></div>
+                <div id="task-desc-success" style="display:none;">
+                    <p class="mb-2"><strong>Origem:</strong> <code id="task-desc-source"></code></p>
+                    <p class="mb-2"><strong>Endpoint:</strong> <code id="task-desc-endpoint"></code></p>
+                    <div class="mb-4">
+                        <h6 class="fw-semibold">HTML Bruto</h6>
+                        <div class="border rounded p-3 bg-white" style="max-height:300px; overflow:auto;">
+                            <pre id="task-desc-raw" style="white-space:pre-wrap;font-size:12px;"></pre>
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <h6 class="fw-semibold">Renderizado</h6>
+                        <div id="task-desc-render" class="border rounded p-3 bg-white" style="max-height:300px; overflow:auto;"></div>
+                    </div>
+                    <div class="mb-2">
+                        <h6 class="fw-semibold">Texto Limpo</h6>
+                        <div id="task-desc-text" class="border rounded p-3 bg-white" style="max-height:300px; overflow:auto;font-size:13px;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                <button type="button" class="btn btn-outline-primary" id="task-desc-copy-btn" style="display:none;">
+                    <i class="fas fa-copy me-1"></i> Copiar Texto
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
     // v1.0.2 - Fixed createdDate scope issue
     jQuery(document).ready(function($) {
+    const TASKROW_HOST = '<?php echo esc_js($api_host); ?>';
         // Verificar se f2f_ajax está disponível
         if (typeof f2f_ajax === 'undefined') {
             console.error('f2f_ajax não está definido! Verifique se o script está sendo carregado.');
@@ -1054,7 +1128,9 @@ $sent_demands = count(array_filter($demands, function ($d) {
             // Buscar dados da linha com mais informações
             const taskrowId = $row.data('taskrow-id');
             const title = $row.find('.task-info strong').text();
-            const description = $row.find('.task-description').text() || 'Sem descrição disponível';
+            // Restaurar descrição imediata (usa full se disponível) para exibir algo enquanto carrega API
+            const fullDescHtml = $row.find('.task-description-full').html();
+            const description = fullDescHtml ? fullDescHtml : ($row.find('.task-description').text() || 'Sem descrição disponível');
             const client = $row.find('.client-info .badge').text().replace(/\s+/g, ' ').trim();
             const status = $row.find('.status-badge').text().replace(/\s+/g, ' ').trim();
             const priority = $row.find('.priority-badge').text().trim() || 'Não definida';
@@ -1068,9 +1144,14 @@ $sent_demands = count(array_filter($demands, function ($d) {
                         <h4 class="mb-0">${title}</h4>
                         <span class="badge bg-secondary">#${taskrowId}</span>
                     </div>
-                    <p class="text-muted mb-0">${description}</p>
+                    <div class="detail-section mb-4" id="api-description-wrapper">
+                        <h6 class="fw-semibold mb-2"><i class="fas fa-align-left me-1"></i>Descrição (Taskrow API)</h6>
+                    </div>
+                    <div class="border rounded p-3 bg-white small" style="max-height:250px;overflow:auto;">
+                        ${description}
+                    </div>
                 </div>
-                
+              
                 <div class="row g-3">
                     <div class="col-md-6">
                         <div class="detail-card">
@@ -1113,6 +1194,72 @@ $sent_demands = count(array_filter($demands, function ($d) {
 
             $('#modal-demand-details').html(html);
             new bootstrap.Modal($('#demandDetailsModal')[0]).show();
+
+            // Buscar descrição completa via AJAX
+            // Botões do modal: abrir Taskrow e exportar para ClickUp
+            (function(){
+                let host = (typeof f2f_ajax !== 'undefined' && f2f_ajax.taskrow_host) ? String(f2f_ajax.taskrow_host) : String(TASKROW_HOST || '');
+                // Garantir URL absoluta: se não tiver protocolo, assumir https
+                if (host && !/^https?:\/\//i.test(host)) {
+                    host = 'https://' + host;
+                }
+                let taskrowUrl = '';
+                // Construir URL completa no padrão: /#dashboard/tasks/{clientNickname}/{jobNumber}/{taskNumber}
+                const clientNickname = ($row.data('client-nickname') || '').toString().trim();
+                const jobNumber = ($row.data('job-number') || '').toString().trim();
+                const taskNumber = ($row.data('task-number') || '').toString().trim();
+                if (host && clientNickname && jobNumber && taskNumber) {
+                    taskrowUrl = host.replace(/\/$/, '') + '/#dashboard/tasks/' + encodeURIComponent(clientNickname) + '/' + encodeURIComponent(jobNumber) + '/' + encodeURIComponent(taskNumber);
+                } else if (host && taskrowId) {
+                    // Fallback simples caso não tenhamos os três parâmetros
+                    taskrowUrl = host.replace(/\/$/, '') + '/#/tasks/' + encodeURIComponent(taskrowId);
+                }
+                $('#modal-open-taskrow-btn').prop('disabled', !taskrowUrl).off('click').on('click', function(){
+                    if (!taskrowUrl) return;
+                    window.open(taskrowUrl, '_blank');
+                });
+                $('#modal-export-clickup-btn').off('click').on('click', function(){
+                    const id = demandId;
+                    const $btn = $('.send-to-clickup-btn[data-demand-id="' + id + '"]');
+                    if ($btn.length) { $btn.trigger('click'); }
+                });
+            })();
+
+            // Buscar descrição completa via AJAX
+            const jobNumber = $row.data('job-number');
+            const taskNumber = $row.data('task-number');
+            const clientNickname = $row.data('client-nickname');
+
+            if (!jobNumber || !taskNumber || !clientNickname) {
+                $('#api-description-loading').addClass('d-none');
+                $('#api-description-error').removeClass('d-none').text('Dados insuficientes para obter descrição.');
+                return;
+            }
+
+            $.post(f2f_ajax.ajaxurl, {
+                action: 'f2f_get_taskrow_description',
+                nonce: f2f_ajax.nonce,
+                clientNickname: clientNickname,
+                jobNumber: jobNumber,
+                taskNumber: taskNumber
+            }).done(function(resp) {
+                $('#api-description-loading').addClass('d-none');
+                if (!resp || !resp.success) {
+                    const msg = (resp && resp.data && resp.data.message) ? resp.data.message : (resp && resp.data ? resp.data : 'Erro desconhecido');
+                    $('#api-description-error').removeClass('d-none').text('Falha: ' + msg);
+                    return;
+                }
+                const data = resp.data;
+                const htmlRaw = data.descriptionHtml || '';
+                const textClean = data.descriptionText || '';
+                let renderBlock = htmlRaw ? htmlRaw : '<em>Sem conteúdo</em>';
+                $('#api-description-content').removeClass('d-none').html(renderBlock);
+                const source = data.source ? 'Origem: ' + data.source : 'Origem não encontrada';
+                $('#api-description-source').removeClass('d-none').text(source);
+            }).fail(function() {
+                $('#api-description-loading').addClass('d-none');
+                $('#api-description-error').removeClass('d-none').text('Erro de rede ao obter descrição.');
+            });
         });
 
         // Enviar para ClickUp
@@ -1261,7 +1408,85 @@ $sent_demands = count(array_filter($demands, function ($d) {
 
         // Tooltips
         $('[title]').tooltip();
+
+        // === Descrição da Task (TaskDetail) ===
+        const descModalEl = document.getElementById('taskDescriptionModal');
+        let descModal = null;
+        if (window.bootstrap && descModalEl) {
+            descModal = new window.bootstrap.Modal(descModalEl);
+        }
+
+        function showDescSection(id) {
+            ['task-desc-loading', 'task-desc-error', 'task-desc-success'].forEach(function(k) {
+                const el = document.getElementById(k);
+                if (el) el.style.display = 'none';
+            });
+            const target = document.getElementById(id);
+            if (target) target.style.display = 'block';
+        }
+
+        $(document).on('click', '.view-description-btn', function() {
+            const clientNickname = $(this).data('client-nickname');
+            const jobNumber = $(this).data('job-number');
+            const taskNumber = $(this).data('task-number');
+
+            if (!clientNickname || !jobNumber || !taskNumber) {
+                showMessage('warning', 'Dados insuficientes para buscar descrição.');
+                return;
+            }
+            if (descModal) {
+                descModal.show();
+            }
+            showDescSection('task-desc-loading');
+            $('#task-desc-raw').text('');
+            $('#task-desc-render').html('');
+            $('#task-desc-text').text('');
+            $('#task-desc-source').text('');
+            $('#task-desc-endpoint').text('');
+            $('#task-desc-copy-btn').hide();
+
+            $.post(f2f_ajax.ajaxurl, {
+                action: 'f2f_get_taskrow_description',
+                nonce: f2f_ajax.nonce,
+                clientNickname: clientNickname,
+                jobNumber: jobNumber,
+                taskNumber: taskNumber
+            }).done(function(resp) {
+                if (!resp || !resp.success) {
+                    const msg = (resp && resp.data && resp.data.message) ? resp.data.message : (resp && resp.data ? resp.data : 'Erro desconhecido');
+                    $('#task-desc-error').text('Falha: ' + msg);
+                    showDescSection('task-desc-error');
+                    return;
+                }
+                const data = resp.data;
+                $('#task-desc-raw').text(data.descriptionHtml || '(vazio)');
+                $('#task-desc-render').html(data.descriptionHtml || '<em>Sem conteúdo</em>');
+                $('#task-desc-text').text(data.descriptionText || '(vazio)');
+                $('#task-desc-source').text(data.source || '(não encontrado)');
+                $('#task-desc-endpoint').text(data.endpoint || '');
+                $('#task-desc-copy-btn').show();
+                showDescSection('task-desc-success');
+            }).fail(function() {
+                $('#task-desc-error').text('Erro de rede ao obter descrição.');
+                showDescSection('task-desc-error');
+            });
+        });
+
+        $('#task-desc-copy-btn').on('click', function() {
+            const text = $('#task-desc-text').text();
+            navigator.clipboard.writeText(text).then(() => {
+                $('#task-desc-copy-btn').html('<i class="fas fa-check me-1"></i> Copiado');
+                setTimeout(() => {
+                    $('#task-desc-copy-btn').html('<i class="fas fa-copy me-1"></i> Copiar Texto');
+                }, 1500);
+            });
+        });
     });
+    // Garantir objeto f2f_ajax (caso não venha do wp_localize_script por algum motivo)
+    window.f2f_ajax = window.f2f_ajax || {
+        ajaxurl: '<?php echo esc_js(admin_url('admin-ajax.php')); ?>',
+        nonce: '<?php echo esc_js(wp_create_nonce('f2f_taskrow_desc')); ?>'
+    };
 </script>
 
 <style>
@@ -1412,9 +1637,9 @@ $sent_demands = count(array_filter($demands, function ($d) {
     .task-description {
         line-height: 1.5;
         display: block;
+        white-space: normal;
         overflow: hidden;
         text-overflow: ellipsis;
-        white-space: normal;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;

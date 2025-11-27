@@ -1,4 +1,14 @@
 <?php
+// Localizar objeto JS f2f_ajax (ajaxurl + nonce) (nonce alinhado ao handler existente f2f_taskrow_desc)
+add_action('wp_enqueue_scripts', function(){
+    $nonce = wp_create_nonce('f2f_taskrow_desc');
+    wp_register_script('f2f-empty', false);
+    wp_enqueue_script('f2f-empty');
+    wp_localize_script('f2f-empty', 'f2f_ajax', array(
+        'ajaxurl' => admin_url('admin-ajax.php'),
+        'nonce' => $nonce,
+    ));
+});
 
 /**
  * Include Theme Customizer.
@@ -3317,3 +3327,51 @@ add_action( 'init', function() {
 
 // Incluir a integração do Taskrow
 require_once get_template_directory() . '/inc/taskrow-integration.php';
+
+/**
+ * AJAX: Buscar descrição detalhada (TaskItemComment) de uma task do Taskrow.
+ * Parâmetros POST: clientNickname, jobNumber, taskNumber, nonce
+ */
+function f2f_get_taskrow_description_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Sem permissão.' ), 403 );
+    }
+    $nonce = isset( $_POST['nonce'] ) ? $_POST['nonce'] : '';
+    if ( ! wp_verify_nonce( $nonce, 'f2f_taskrow_desc' ) ) {
+        wp_send_json_error( array( 'message' => 'Nonce inválido.' ), 400 );
+    }
+
+    $client_nickname = isset( $_POST['clientNickname'] ) ? sanitize_text_field( $_POST['clientNickname'] ) : '';
+    $job_number      = isset( $_POST['jobNumber'] ) ? intval( $_POST['jobNumber'] ) : 0;
+    $task_number     = isset( $_POST['taskNumber'] ) ? intval( $_POST['taskNumber'] ) : 0;
+
+    if ( $client_nickname === '' || $job_number <= 0 || $task_number <= 0 ) {
+        wp_send_json_error( array( 'message' => 'Parâmetros inválidos.' ), 400 );
+    }
+
+    if ( ! class_exists( 'F2F_Taskrow_API' ) ) {
+        wp_send_json_error( array( 'message' => 'Classe API indisponível.' ), 500 );
+    }
+
+    $api = F2F_Taskrow_API::get_instance();
+    if ( ! $api->is_configured() ) {
+        wp_send_json_error( array( 'message' => 'API não configurada.' ), 500 );
+    }
+
+    $result = $api->get_task_detail( $client_nickname, $job_number, $task_number );
+
+    if ( is_wp_error( $result ) ) {
+        wp_send_json_error( array( 'message' => $result->get_error_message(), 'data' => $result->get_error_data() ), 500 );
+    }
+
+    wp_send_json_success( array(
+        'descriptionHtml'  => $result['description'] ? wp_kses_post( $result['description'] ) : '',
+        'descriptionText'  => $result['description'] ? wp_strip_all_tags( $result['description'] ) : '',
+        'source'           => $result['description_path'],
+        'clientNickname'   => $result['clientNickname'],
+        'jobNumber'        => $result['jobNumber'],
+        'taskNumber'       => $result['taskNumber'],
+        'endpoint'         => $result['endpoint'],
+    ) );
+}
+add_action( 'wp_ajax_f2f_get_taskrow_description', 'f2f_get_taskrow_description_ajax' );

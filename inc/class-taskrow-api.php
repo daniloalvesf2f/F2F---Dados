@@ -84,6 +84,7 @@ class F2F_Taskrow_API {
         return $data;
     }
 
+
     /**
      * Buscar demandas (tarefas) do Taskrow
      * Baseado na documentação oficial da API
@@ -596,5 +597,128 @@ class F2F_Taskrow_API {
 
         error_log( "F2F Taskrow API: Buscando cidades" . ( $uf ? " para UF: {$uf}" : "" ) );
         return $this->request( 'Client/ListCities', 'GET', $params );
+    }
+
+    /**
+     * Buscar detalhes completos de uma tarefa (TaskDetail)
+     * Endpoint: /api/v1/Task/TaskDetail
+     * Parâmetros (query): clientNickname, jobNumber, taskNumber, connectionID
+     * Retorna descrição (TaskItemComment) com múltiplos fallbacks e origem.
+     */
+    public function get_task_detail( $client_nickname, $job_number, $task_number ) {
+        if ( ! $this->is_configured() ) {
+            return new WP_Error( 'taskrow_api_not_configured', 'API Taskrow não está configurada.' );
+        }
+
+        $client_nickname = trim( (string) $client_nickname );
+        $job_number      = intval( $job_number );
+        $task_number     = intval( $task_number );
+
+        if ( $client_nickname === '' || $job_number <= 0 || $task_number <= 0 ) {
+            return new WP_Error( 'taskrow_invalid_params', 'Parâmetros inválidos para TaskDetail.' );
+        }
+
+        // Gerar connectionID (GUID simples)
+        $connection_id = sprintf(
+            '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+            mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ),
+            mt_rand( 0, 0x0fff ) | 0x4000, mt_rand( 0, 0x3fff ) | 0x8000,
+            mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff )
+        );
+
+        $url = 'https://' . $this->host_name . '/api/v1/Task/TaskDetail'
+             . '?clientNickname=' . rawurlencode( $client_nickname )
+             . '&jobNumber=' . $job_number
+             . '&taskNumber=' . $task_number
+             . '&connectionID=' . rawurlencode( $connection_id );
+
+        $args = array(
+            'method'  => 'GET',
+            'headers' => array(
+                '__identifier' => $this->api_token,
+                'Content-Type' => 'application/json',
+                'Accept'       => 'application/json',
+                'User-Agent'   => 'WordPress/F2F Taskrow Integration'
+            ),
+            'timeout'  => 45,
+            'sslverify' => false,
+        );
+
+        $response = wp_remote_request( $url, $args );
+        if ( is_wp_error( $response ) ) {
+            return $response;
+        }
+
+        $code = wp_remote_retrieve_response_code( $response );
+        $body = wp_remote_retrieve_body( $response );
+
+        $data = json_decode( $body, true );
+        if ( $code < 200 || $code >= 300 ) {
+            return new WP_Error( 'taskrow_taskdetail_error', 'Erro ao obter TaskDetail (HTTP ' . $code . ')', array( 'body' => $body, 'code' => $code ) );
+        }
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            return new WP_Error( 'taskrow_taskdetail_json_error', 'Falha ao decodificar JSON: ' . json_last_error_msg(), array( 'body' => $body ) );
+        }
+
+        // Função recursiva para localizar TaskItemComment em qualquer profundidade
+        $recursive_find = function( $node, $path = array() ) use ( &$recursive_find ) {
+            if ( is_array( $node ) ) {
+                foreach ( $node as $k => $v ) {
+                    $current_path = array_merge( $path, array( $k ) );
+                    if ( $k === 'TaskItemComment' && is_string( $v ) && $v !== '' ) {
+                        return array( 'value' => $v, 'path' => $current_path );
+                    }
+                    $found = $recursive_find( $v, $current_path );
+                    if ( $found ) {
+                        return $found;
+                    }
+                }
+            }
+            return null;
+        };
+
+        $description      = null;
+        $description_path = null;
+        $task_data        = isset( $data['TaskData'] ) && is_array( $data['TaskData'] ) ? $data['TaskData'] : array();
+
+        // 1. Direto em TaskData
+        if ( isset( $task_data['TaskItemComment'] ) && is_string( $task_data['TaskItemComment'] ) ) {
+            $description      = $task_data['TaskItemComment'];
+            $description_path = 'TaskData.TaskItemComment';
+        }
+        // 2. TaskItems
+        if ( ! $description && isset( $task_data['TaskItems'][0]['TaskItemComment'] ) ) {
+            $description      = $task_data['TaskItems'][0]['TaskItemComment'];
+            $description_path = 'TaskData.TaskItems[0].TaskItemComment';
+        }
+        // 3. NewTaskItems
+        if ( ! $description && isset( $task_data['NewTaskItems'][0]['TaskItemComment'] ) ) {
+            $description      = $task_data['NewTaskItems'][0]['TaskItemComment'];
+            $description_path = 'TaskData.NewTaskItems[0].TaskItemComment';
+        }
+        // 4. ExternalTaskItems
+        if ( ! $description && isset( $task_data['ExternalTaskItems'][0]['TaskItemComment'] ) ) {
+            $description      = $task_data['ExternalTaskItems'][0]['TaskItemComment'];
+            $description_path = 'TaskData.ExternalTaskItems[0].TaskItemComment';
+        }
+        // 5. Recursivo
+        if ( ! $description ) {
+            $found = $recursive_find( $data );
+            if ( $found ) {
+                $description      = $found['value'];
+                $description_path = implode( ' > ', $found['path'] );
+            }
+        }
+
+        return array(
+            'raw'               => $data,
+            'description'       => $description,
+            'description_path'  => $description_path,
+            'clientNickname'    => $client_nickname,
+            'jobNumber'         => $job_number,
+            'taskNumber'        => $task_number,
+            'connectionID'      => $connection_id,
+            'endpoint'          => $url,
+        );
     }
 }

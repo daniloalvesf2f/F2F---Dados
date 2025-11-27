@@ -1471,6 +1471,25 @@ function f2f_ajax_import_by_clients()
                     'owner_user_login' => $owner_login,
                 );
 
+                // Enriquecer descrição usando TaskDetail se estiver vazia
+                if (empty($data['description']) && !empty($data['job_number']) && !empty($data['task_number'])) {
+                    if (!class_exists('F2F_Taskrow_API')) {
+                        $api_class = __DIR__ . '/class-taskrow-api.php';
+                        if (is_readable($api_class)) {
+                            require_once $api_class;
+                        }
+                    }
+                    if (class_exists('F2F_Taskrow_API')) {
+                        $api = F2F_Taskrow_API::get_instance();
+                        if ($api->is_configured()) {
+                            $detail = $api->get_task_detail($data['client_nickname'], $data['job_number'], $data['task_number']);
+                            if (!is_wp_error($detail) && !empty($detail['description'])) {
+                                $data['description'] = $detail['description'];
+                            }
+                        }
+                    }
+                }
+
                 if ($existing) {
                     $wpdb->update($table_name, $data, array('id' => $existing));
                     $total_updated++;
@@ -1560,6 +1579,82 @@ function f2f_ajax_test_taskrow_connection()
     ));
 }
 add_action('wp_ajax_f2f_test_taskrow_connection', 'f2f_ajax_test_taskrow_connection');
+
+/**
+ * AJAX: Preencher descrições faltantes (TaskItemComment) em lotes.
+ * Param opcional: batch (int) tamanho do lote (default 15)
+ */
+add_action('wp_ajax_f2f_fill_missing_descriptions', 'f2f_ajax_fill_missing_descriptions');
+function f2f_ajax_fill_missing_descriptions() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('message' => 'Sem permissão'));
+    }
+    $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+    if (!wp_verify_nonce($nonce, 'f2f_taskrow_desc')) {
+        wp_send_json_error(array('message' => 'Nonce inválido'));
+    }
+    global $wpdb;
+    $batch = isset($_POST['batch']) ? intval($_POST['batch']) : 15;
+    if ($batch < 1) { $batch = 15; }
+    $table_name = $wpdb->prefix . 'f2f_taskrow_demands';
+
+    // Selecionar demandas sem descrição
+    $rows = $wpdb->get_results($wpdb->prepare(
+        "SELECT id, taskrow_id, client_nickname, job_number, task_number FROM {$table_name} WHERE (description IS NULL OR description = '') AND job_number > 0 AND task_number > 0 LIMIT %d",
+        $batch
+    ));
+
+    if (!$rows) {
+        wp_send_json_success(array(
+            'processed' => 0,
+            'remaining' => 0,
+            'message' => 'Nenhuma demanda pendente sem descrição.'
+        ));
+    }
+
+    if (!class_exists('F2F_Taskrow_API')) {
+        $api_class = __DIR__ . '/class-taskrow-api.php';
+        if (is_readable($api_class)) {
+            require_once $api_class;
+        }
+    }
+    if (!class_exists('F2F_Taskrow_API')) {
+        wp_send_json_error(array('message' => 'API não disponível'));
+    }
+    $api = F2F_Taskrow_API::get_instance();
+    if (!$api->is_configured()) {
+        wp_send_json_error(array('message' => 'API não configurada'));
+    }
+
+    $updated = 0;
+    foreach ($rows as $r) {
+        $clientNickname = $r->client_nickname;
+        $jobNumber = intval($r->job_number);
+        $taskNumber = intval($r->task_number);
+        if (!$clientNickname || !$jobNumber || !$taskNumber) {
+            continue;
+        }
+        $detail = $api->get_task_detail($clientNickname, $jobNumber, $taskNumber);
+        if (is_wp_error($detail)) {
+            continue; // pular erros silenciosamente
+        }
+        $desc = $detail['description'] ?? null;
+        if ($desc && is_string($desc) && trim($desc) !== '') {
+            $wpdb->update($table_name, array('description' => $desc), array('id' => $r->id));
+            $updated++;
+        }
+    }
+
+    // Contar restantes
+    $remaining = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$table_name} WHERE (description IS NULL OR description = '') AND job_number > 0 AND task_number > 0");
+
+    wp_send_json_success(array(
+        'processed' => count($rows),
+        'updated' => $updated,
+        'remaining' => $remaining,
+        'message' => $updated > 0 ? "Atualizadas {$updated} descrições." : 'Nenhuma descrição encontrada nos itens processados.'
+    ));
+}
 
 /**
  * AJAX: Listar todos os clientes da API Taskrow
